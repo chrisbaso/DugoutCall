@@ -157,7 +157,7 @@ async function createRoom() {
   $("enterCoachDashboard").classList.remove("hidden");
   $("coachConnection").textContent = "Room ready";
   $("createRoom").disabled = false;
-  connectSocket("coach", room.code);
+  connectSocket("coach", room.code, "Coach");
 }
 
 async function joinRoom() {
@@ -178,19 +178,19 @@ async function joinRoom() {
   state.role = "catcher";
   state.roomCode = code;
   $("catcherBannerCode").textContent = code;
-  connectSocket("catcher", code);
+  connectSocket("catcher", code, "Catcher");
   show("catcherScreen");
   playText("DugoutCall connected.");
 }
 
-function connectSocket(role, code) {
+function connectSocket(role, code, displayName = role) {
   state.socket?.close();
   state.socket = new WebSocket(wsURL());
   setNetwork("Connecting");
 
   state.socket.onopen = () => {
     setNetwork("Connected", true);
-    state.socket.send(JSON.stringify({ type: "join_room", code, role, displayName: role }));
+    state.socket.send(JSON.stringify({ type: "join_room", code, role, displayName }));
   };
   state.socket.onclose = () => {
     setNetwork("Disconnected");

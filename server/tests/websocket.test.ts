@@ -71,6 +71,39 @@ describe('websocket relay', () => {
     catcher.close();
   });
 
+  it('lets the catcher socket attach after HTTP join claims the catcher slot', async () => {
+    const store = new RoomStore({ ttlMs: 60_000, now: () => 1_000 });
+    const room = store.createRoom({ coachName: 'Coach B' });
+    store.joinRoom(room.code, { role: 'catcher', displayName: 'Catcher' });
+
+    server = http.createServer();
+    attachWebSocketServer(server, store);
+
+    await new Promise<void>((resolve) => server!.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('missing server address');
+
+    const catcher = new WebSocket(`ws://127.0.0.1:${address.port}`);
+    await new Promise((resolve) => catcher.once('open', resolve));
+
+    const assigned = onceMessage(catcher);
+    catcher.send(
+      JSON.stringify({
+        type: 'join_room',
+        code: room.code,
+        role: 'catcher',
+        displayName: 'Catcher'
+      })
+    );
+
+    await expect(assigned).resolves.toMatchObject({
+      type: 'role_assigned',
+      role: 'catcher'
+    });
+
+    catcher.close();
+  });
+
   it('relays WebRTC signaling in both directions as technical transport only', async () => {
     const store = new RoomStore({ ttlMs: 60_000, now: () => 1_000 });
     const room = store.createRoom({ coachName: 'Coach B' });
