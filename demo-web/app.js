@@ -113,33 +113,66 @@ function showSentFeedback(text) {
   $("selectionSummary").textContent = `Sent: ${text}`;
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchJSONWithRetry(path, options, statusElementId) {
+  const delays = [0, 1200, 2500, 5000];
+  let lastError = new Error("Request failed");
+
+  for (let attempt = 0; attempt < delays.length; attempt += 1) {
+    if (delays[attempt] > 0) {
+      if (statusElementId) $(statusElementId).textContent = "Waking server...";
+      setNetwork("Waking server");
+      await sleep(delays[attempt]);
+    }
+
+    try {
+      const response = await fetch(apiURL(path), { ...options, cache: "no-store" });
+      if (response.ok) {
+        setNetwork("Online", true);
+        return response.json();
+      }
+      lastError = new Error(`Server returned ${response.status}`);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("Network request failed");
+    }
+  }
+
+  throw lastError;
+}
+
 async function createRoom() {
-  const response = await fetch(apiURL("/rooms"), {
+  $("createRoom").disabled = true;
+  $("coachConnection").textContent = "Creating room...";
+  const room = await fetchJSONWithRetry("/rooms", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ coachName: "Coach", teamName: "Demo", mode: "game" })
-  });
-  if (!response.ok) throw new Error("Could not create room");
-  const room = await response.json();
+  }, "coachConnection");
   state.role = "coach";
   state.roomCode = room.code;
   $("coachRoomCode").textContent = room.code;
   $("coachBannerCode").textContent = room.code;
   $("coachRoomCard").classList.remove("hidden");
   $("enterCoachDashboard").classList.remove("hidden");
+  $("coachConnection").textContent = "Room ready";
+  $("createRoom").disabled = false;
   connectSocket("coach", room.code);
 }
 
 async function joinRoom() {
   const code = $("joinCode").value.trim();
   if (code.length !== 6) return;
-  const response = await fetch(apiURL(`/rooms/${code}/join`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role: "catcher", displayName: "Catcher" })
-  });
-  if (!response.ok) {
+  $("joinRoom").disabled = true;
+  try {
+    await fetchJSONWithRetry(`/rooms/${code}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "catcher", displayName: "Catcher" })
+    }, "catcherConnection");
+  } catch {
     $("catcherConnection").textContent = "Join failed";
+    $("joinRoom").disabled = false;
     return;
   }
   state.role = "catcher";
@@ -518,14 +551,18 @@ loadClientConfig();
 $("coachMode").onclick = () => show("coachPairingScreen");
 $("catcherMode").onclick = () => show("catcherPairingScreen");
 $("createRoom").onclick = () => createRoom().catch((error) => {
-  $("coachConnection").textContent = error.message;
+  $("coachConnection").textContent = error.message || "Could not create room";
+  $("createRoom").disabled = false;
 });
 $("enterCoachDashboard").onclick = () => show("coachScreen");
 $("customizeButton").onclick = () => show("customizeScreen");
 $("backToCoach").onclick = () => show("coachScreen");
 $("saveCustomizations").onclick = () => saveCustomizations();
 $("resetCustomizations").onclick = () => resetCustomizations();
-$("joinRoom").onclick = () => joinRoom();
+$("joinRoom").onclick = () => joinRoom().catch(() => {
+  $("catcherConnection").textContent = "Join failed";
+  $("joinRoom").disabled = false;
+});
 $("joinCode").oninput = (event) => {
   event.target.value = event.target.value.replace(/\D/g, "").slice(0, 6);
 };
