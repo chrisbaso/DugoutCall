@@ -2,6 +2,8 @@
 
 DugoutCall is an iOS 17+ baseball pitch-calling communication system for a coach iPhone and a catcher iPhone. The coach sends large-button pitch/location calls and push-to-talk control signals over the network. The catcher phone receives commands, speaks pitch calls with AVFoundation text-to-speech, and routes playback to the catcher's locally paired AirPods.
 
+Repository: https://github.com/chrisbaso/DugoutCall
+
 > Use only where permitted by your league/state association. Game Mode is designed for one-way coach-to-catcher communication.
 
 ## Hardware Requirements
@@ -124,6 +126,14 @@ Important PWA notes:
 ## Hosted Field Demo
 
 For use at a separate field without a laptop, deploy DugoutCall as a hosted HTTPS service. The included `Dockerfile` and `render.yaml` are set up for Render.
+
+Fastest path:
+
+1. Open https://dashboard.render.com/blueprints/new.
+2. Connect the GitHub repo: `chrisbaso/DugoutCall`.
+3. Let Render use the included `render.yaml`.
+4. Deploy the web service.
+5. Open the Render HTTPS URL on both iPhones.
 
 Render deployment:
 
