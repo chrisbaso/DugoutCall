@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install server dependencies
+        run: npm install --prefix server --include=dev
+
+      - name: Run server tests
+        run: npm test --prefix server
+
+      - name: Build server
+        run: npm run build --prefix server
+
+      - name: Verify PWA runtime config build
+        run: npm run vercel-build

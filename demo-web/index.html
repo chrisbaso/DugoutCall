@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>DugoutCall PWA Demo</title>
+    <meta name="theme-color" content="#0b100d" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="DugoutCall" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./runtime-config.js"></script>
+  </head>
+  <body>
+    <audio id="remoteAudio" autoplay playsinline></audio>
+
+    <main class="app-shell">
+      <section class="app-header">
+        <div>
+          <h1>DugoutCall</h1>
+          <p>Use only where permitted by your league/state association. Game Mode is designed for one-way coach-to-catcher communication.</p>
+        </div>
+        <div id="networkBadge" class="badge">Offline</div>
+      </section>
+
+      <section id="roleScreen" class="screen active">
+        <div class="role-card">
+          <h2>Choose role</h2>
+          <button id="coachMode" class="primary huge">Coach Mode</button>
+          <button id="catcherMode" class="secondary huge">Catcher Mode</button>
+        </div>
+      </section>
+
+      <section id="coachPairingScreen" class="screen">
+        <div class="role-card">
+          <h2>Create Game Room</h2>
+          <p class="muted">The coach sends calls and live voice. Catcher is listen-only.</p>
+          <button id="createRoom" class="primary huge">Create Room</button>
+          <div id="coachRoomCard" class="room-card hidden">
+            <span>Room code</span>
+            <strong id="coachRoomCode">------</strong>
+          </div>
+          <button id="enterCoachDashboard" class="secondary huge hidden">Enter Coach Dashboard</button>
+        </div>
+      </section>
+
+      <section id="catcherPairingScreen" class="screen">
+        <div class="role-card">
+          <h2>Join as Catcher</h2>
+          <p class="muted">Connect AirPods to this iPhone before joining.</p>
+          <input id="joinCode" inputmode="numeric" maxlength="6" placeholder="6-digit code" />
+          <button id="joinRoom" class="primary huge">Join Room</button>
+        </div>
+      </section>
+
+      <section id="coachScreen" class="screen">
+        <div class="banner">
+          <span>Room <b id="coachBannerCode">------</b></span>
+          <span id="coachConnection">Connected</span>
+          <span id="coachVoiceStatus">Voice ready</span>
+          <span>Game Mode</span>
+        </div>
+        <div class="coach-tools">
+          <div id="selectionSummary" class="selection-summary">Select pitch and location</div>
+          <button id="customizeButton" class="secondary compact-button">Customize</button>
+        </div>
+
+        <h3>Presets</h3>
+        <div id="presetGrid" class="preset-grid"></div>
+
+        <h3>Pitch</h3>
+        <div id="pitchGrid" class="button-grid pitch-grid"></div>
+
+        <h3>Location</h3>
+        <div id="locationGrid" class="button-grid location-grid"></div>
+
+        <h3>Count / Context</h3>
+        <div id="contextGrid" class="context-grid"></div>
+
+        <footer class="action-row">
+          <button id="sendCall" class="primary">Send</button>
+          <button id="repeatLast" class="secondary">Repeat Last</button>
+          <button id="clearSelection" class="secondary">Clear</button>
+          <button id="talkButton" class="talk">Hold to Talk</button>
+        </footer>
+        <div id="coachNotice" class="notice">Push-to-talk asks for microphone permission the first time you hold Talk.</div>
+      </section>
+
+      <section id="customizeScreen" class="screen">
+        <div class="customize-header">
+          <div>
+            <h2>Customize Calls</h2>
+            <p class="muted">Saved on this phone. Keep labels short for game-day speed.</p>
+          </div>
+          <button id="backToCoach" class="secondary compact-button">Back</button>
+        </div>
+        <h3>Pitch Buttons</h3>
+        <div id="pitchEditor" class="editor-grid"></div>
+        <h3>Presets</h3>
+        <div id="presetEditor" class="preset-editor"></div>
+        <div class="editor-actions">
+          <button id="saveCustomizations" class="primary">Save</button>
+          <button id="resetCustomizations" class="secondary">Reset Defaults</button>
+        </div>
+      </section>
+
+      <section id="catcherScreen" class="screen catcher-screen">
+        <div class="banner">
+          <span>Room <b id="catcherBannerCode">------</b></span>
+          <span id="catcherConnection">Connected</span>
+          <span id="catcherRoute">AirPods if connected</span>
+          <span>Listen-only</span>
+        </div>
+
+        <div class="field-mark" aria-hidden="true">
+          <svg viewBox="0 0 220 160" role="img">
+            <path d="M110 14 204 82 110 148 16 82Z" />
+            <path d="M110 14v134M16 82h188" />
+            <circle cx="110" cy="82" r="20" />
+          </svg>
+        </div>
+
+        <div id="catcherState" class="receiver-state">Connected</div>
+        <div id="catcherSubstate" class="receiver-substate">Waiting for call</div>
+        <div id="spokenLog" class="spoken-log">No pitch call yet.</div>
+        <button id="testAudio" class="secondary wide">Play test audio</button>
+        <button id="disconnect" class="danger wide">Emergency Disconnect</button>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

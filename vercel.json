@@ -1,0 +1,12 @@
+{
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "demo-web",
+  "installCommand": "npm install --prefix server --include=dev",
+  "framework": null,
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

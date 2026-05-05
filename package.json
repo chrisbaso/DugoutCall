@@ -1,0 +1,10 @@
+{
+  "name": "dugoutcall",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/write-runtime-config.mjs",
+    "vercel-build": "node scripts/write-runtime-config.mjs",
+    "test": "npm test --prefix server"
+  }
+}

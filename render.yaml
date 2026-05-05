@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: dugoutcall
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DUGOUTCALL_TOKEN_SECRET
+        generateValue: true
+      - key: ROOM_TTL_MS
+        value: "7200000"
+      - key: DUGOUTCALL_ICE_SERVERS
+        value: '[{"urls":"stun:stun.l.google.com:19302"}]'
