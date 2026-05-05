@@ -134,8 +134,9 @@ Fastest path:
 1. Open the Deploy to Render button above, or go to https://render.com/deploy?repo=https://github.com/chrisbaso/DugoutCall.
 2. Connect the GitHub repo: `chrisbaso/DugoutCall`.
 3. Let Render use the included `render.yaml`.
-4. Deploy the web service.
-5. Open the Render HTTPS URL on both iPhones.
+4. Keep the instance type on Free for no monthly charge, or upgrade later if you need it awake all the time.
+5. Deploy the web service.
+6. Open the Render HTTPS URL on both iPhones.
 
 Render deployment:
 
@@ -178,6 +179,8 @@ After deployment:
 6. Coach sends pitch calls or holds Talk.
 
 No laptop is needed at the field after the service is deployed.
+
+Free hosting note: the default Blueprint uses Render's Free instance type. It can sleep after idle time, so open the app a minute before a demo or game test to wake it up. For more reliable live use, switch the Render service to a paid instance.
 
 ## Vercel Deployment
 
