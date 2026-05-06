@@ -8,10 +8,10 @@ final class PitchCallTests: XCTestCase {
         XCTAssertEqual(call.spokenText, "Fastball away")
     }
 
-    func testSliderDownAwayPhrase() {
-        let call = PitchCall(pitch: .slider, location: .downAway)
+    func testCurveballDownAwayPhrase() {
+        let call = PitchCall(pitch: .curveball, location: .downAway)
 
-        XCTAssertEqual(call.spokenText, "Slider down away")
+        XCTAssertEqual(call.spokenText, "Curveball down away")
     }
 
     func testPickoffDoesNotRequireLocation() {
@@ -24,7 +24,7 @@ final class PitchCallTests: XCTestCase {
         let original = PitchCall(pitch: .changeup, location: .down)
         let repeated = original.repeating()
 
-        XCTAssertEqual(repeated.spokenText, original.spokenText)
+        XCTAssertEqual(repeated.spokenText, "Change-up down")
         XCTAssertNotEqual(repeated.id, original.id)
     }
 }

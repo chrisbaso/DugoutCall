@@ -1,12 +1,26 @@
 # DugoutCall
 
-DugoutCall is an iOS 17+ baseball pitch-calling communication system for a coach iPhone and a catcher iPhone. The coach sends large-button pitch/location calls and push-to-talk control signals over the network. The catcher phone receives commands, speaks pitch calls with AVFoundation text-to-speech, and routes playback to the catcher's locally paired AirPods.
+DugoutCall is a native SwiftUI iOS 17+ baseball pitch-calling communication system for a coach iPhone and a catcher iPhone. The coach uses large game-day buttons and press-and-hold talk controls. The catcher phone receives one-way pitch calls and coach voice, then plays audio through the catcher's locally paired AirPods.
 
 Repository: https://github.com/chrisbaso/DugoutCall
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/chrisbaso/DugoutCall)
+[![Deploy Backend to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/chrisbaso/DugoutCall)
 
 > Use only where permitted by your league/state association. Game Mode is designed for one-way coach-to-catcher communication.
+
+## Product Scope
+
+DugoutCall is no longer scoped as a production web app. The production client is the native SwiftUI iOS app in `ios/`.
+
+The backend is intentionally lightweight:
+
+- Create and expire rooms.
+- Issue per-room coach/catcher tokens.
+- Relay pitch-call JSON messages.
+- Relay WebRTC/LiveKit push-to-talk signaling.
+- Provide health/config endpoints.
+
+The `demo-web/` PWA remains in the repo only as a development harness for backend, room, and signaling experiments. It is not the product experience and should not drive UI or field-use decisions.
 
 ## Hardware Requirements
 
@@ -57,8 +71,7 @@ npm install
 npm run dev
 ```
 
-The local server defaults to `http://localhost:8787`.
-It also serves the PWA demo from the same origin, so desktop testing can open `http://localhost:8787`.
+The local server defaults to `http://localhost:8787`. Native iOS clients should point Settings at this server URL during development.
 
 Endpoints:
 
@@ -87,6 +100,15 @@ Production notes:
 
 Microphone permission is required for coach push-to-talk. Real AirPods routing and microphone behavior require physical devices.
 
+Native field-use priorities:
+
+- Coach screen must be usable one-handed between pitches.
+- Pitch grid defaults to Fastball, Curveball, and Change-up.
+- Pitchout and Pickoff are special one-tap calls, not normal pitch-grid clutter.
+- Catcher screen is locked listen-only in Game Mode.
+- AirPods must be paired to the catcher iPhone.
+- Live voice is one-way only in Game Mode.
+
 ## Game Mode
 
 Game Mode is the default and primary flow.
@@ -99,9 +121,9 @@ Game Mode is the default and primary flow.
 
 Technical heartbeats and low-level connection maintenance are allowed, but DugoutCall does not show catcher acknowledgements or read receipts in Game Mode.
 
-## PWA Two-Phone Demo
+## Web Harness
 
-The web demo can run as a real two-phone PWA without a Mac.
+The web app is a development harness, not the production target. Use it only to smoke-test backend room pairing, pitch relay, and browser WebRTC experiments when a Mac/Xcode device setup is not available.
 
 1. Start the server:
 
@@ -116,18 +138,16 @@ The web demo can run as a real two-phone PWA without a Mac.
 5. Catcher connects AirPods to the catcher iPhone.
 6. Catcher taps Play test audio once if iOS has not unlocked audio playback.
 7. Coach sends pitch calls or presses and holds Talk.
-8. In Safari, use Share > Add to Home Screen to install the PWA-style launcher.
-
-Important PWA notes:
+Important web harness notes:
 
 - iPhone microphone access requires HTTPS or localhost. A LAN URL like `http://192.168.x.x:8787` can show the UI and relay pitch calls, but push-to-talk microphone access may be blocked by the browser.
 - WebRTC live audio uses STUN by default. Same-Wi-Fi demos are the easiest path. Some networks require a TURN server for reliable audio.
-- The PWA cannot force AirPods routing; connect AirPods to the catcher iPhone before joining.
+- A browser cannot provide the same AirPods/audio-session control as native iOS.
 - Game Mode remains one-way. Catcher-originated WebRTC answer and ICE messages are technical transport only and are not exposed as a player feedback feature.
 
 ## Hosted Field Demo
 
-For use at a separate field without a laptop, deploy DugoutCall as a hosted HTTPS service. The included `Dockerfile` and `render.yaml` are set up for Render.
+For native iOS use away from a laptop, deploy the lightweight backend as a hosted HTTPS/WSS service. The included `Dockerfile` and `render.yaml` are set up for Render.
 
 Fastest path:
 
@@ -136,7 +156,7 @@ Fastest path:
 3. Let Render use the included `render.yaml`.
 4. Keep the instance type on Free for no monthly charge, or upgrade later if you need it awake all the time.
 5. Deploy the web service.
-6. Open the Render HTTPS URL on both iPhones.
+6. Put the Render HTTPS URL into Settings on both native iOS apps.
 
 Render deployment:
 
@@ -171,52 +191,21 @@ More reliable field/cellular voice usually needs TURN. Example shape:
 
 After deployment:
 
-1. Coach opens the hosted HTTPS URL on an iPhone.
-2. Catcher opens the same hosted HTTPS URL on a second iPhone.
-3. Catcher connects AirPods.
-4. Coach creates a room.
-5. Catcher joins with the six-digit room code.
-6. Coach sends pitch calls or holds Talk.
+1. Coach opens the native iOS app.
+2. Catcher opens the native iOS app on a second iPhone.
+3. Both apps use the hosted backend URL in Settings.
+4. Catcher connects AirPods to the catcher iPhone.
+5. Coach creates a room.
+6. Catcher joins with the six-digit room code.
+7. Coach sends pitch calls or holds Talk.
 
 No laptop is needed at the field after the service is deployed.
 
 Free hosting note: the default Blueprint uses Render's Free instance type. It can sleep after idle time, so open the app a minute before a demo or game test to wake it up. For more reliable live use, switch the Render service to a paid instance.
 
-## Vercel Deployment
+## Web Hosting Non-Goal
 
-Vercel is a good fit for hosting the PWA front-end, but the current DugoutCall backend uses a long-lived WebSocket server for rooms and WebRTC signaling. Vercel Functions are not the right place for that server. Use Vercel for the web app and host the backend on Render, Fly.io, Railway, or another Node host that supports persistent WebSockets.
-
-Recommended split:
-
-```text
-Vercel:  PWA static web app
-Backend: Node/WebSocket server on Render/Fly/Railway
-Phones:  Open the Vercel HTTPS URL
-```
-
-Vercel setup:
-
-1. Deploy the backend first and confirm it has an HTTPS URL, for example `https://dugoutcall-backend.onrender.com`.
-2. Push this repo to GitHub.
-3. Import the project into Vercel.
-4. Set the project root to this `DugoutCall` folder.
-5. Add this environment variable in Vercel:
-
-   ```text
-   DUGOUTCALL_PUBLIC_SERVER_URL=https://your-backend-host.example.com
-   ```
-
-6. Deploy. Vercel runs `npm run vercel-build`, which writes `demo-web/runtime-config.js`.
-
-Local Vercel-style build:
-
-```bash
-cd DugoutCall
-$env:DUGOUTCALL_PUBLIC_SERVER_URL="https://your-backend-host.example.com"
-npm run vercel-build
-```
-
-If `DUGOUTCALL_PUBLIC_SERVER_URL` is blank, the PWA uses the same origin. That is useful for local development and Render's all-in-one deployment, but not for Vercel unless the backend is hosted separately.
+Do not optimize DugoutCall around Vercel/PWA deployment. If the web harness is hosted, it is only for internal testing. Production field use should be native iOS plus the hosted backend.
 
 ## Practice Mode
 
@@ -231,12 +220,11 @@ Practice Mode is present as a settings/admin toggle for future testing workflows
 - WebSocket pitch command relay from coach to catcher.
 - Catcher TTS playback with speech rate and volume settings.
 - Repeat Last, Clear, presets, pitch grid, and location grid.
-- Compact mobile coach grid with sticky Send/Repeat/Clear/Talk controls.
-- Compact default pitch set: Fastball, Curveball, and Change-up.
-- Per-device PWA customization for pitch button labels and preset buttons, stored locally in the browser.
+- Native SwiftUI coach grid optimized around Fastball, Curveball, and Change-up.
+- Pitchout and Pickoff remain one-tap presets.
 - AVAudioSession configuration for coach push-to-talk and catcher playback.
 - Push-to-talk start/stop signaling is implemented. A production live voice stream should connect `PushToTalkService` to a WebRTC or LiveKit media transport before game use.
-- PWA push-to-talk uses browser WebRTC media with WebSocket signaling. Native SwiftUI push-to-talk still needs the iOS media transport adapter.
+- Native SwiftUI push-to-talk still needs the iOS WebRTC or LiveKit media transport adapter.
 
 ## Testing
 

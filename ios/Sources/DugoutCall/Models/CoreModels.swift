@@ -52,18 +52,18 @@ public struct Participant: Codable, Equatable, Identifiable {
 
 public enum PitchType: String, Codable, CaseIterable, Identifiable {
     case fastball = "Fastball"
-    case twoSeam = "2-Seam"
-    case cutter = "Cutter"
-    case slider = "Slider"
     case curveball = "Curveball"
-    case changeup = "Changeup"
-    case splitter = "Splitter"
+    case changeup = "Change-up"
     case pitchout = "Pitchout"
     case pickoff = "Pickoff"
-    case custom1 = "Custom 1"
-    case custom2 = "Custom 2"
 
     public var id: String { rawValue }
+
+    public static let pitchGridCases: [PitchType] = [
+        .fastball,
+        .curveball,
+        .changeup
+    ]
 }
 
 public enum PitchLocation: String, Codable, CaseIterable, Identifiable {
@@ -136,10 +136,10 @@ public struct PresetCall: Codable, Equatable, Identifiable {
     public static let defaults: [PresetCall] = [
         PresetCall(label: "FB Away", pitch: .fastball, location: .away),
         PresetCall(label: "FB Up", pitch: .fastball, location: .up),
-        PresetCall(label: "Slider Away", pitch: .slider, location: .away),
         PresetCall(label: "Curve Down", pitch: .curveball, location: .down),
+        PresetCall(label: "Curve Away", pitch: .curveball, location: .away),
         PresetCall(label: "Change Down", pitch: .changeup, location: .down),
-        PresetCall(label: "Waste", pitch: .fastball, location: .upAway),
+        PresetCall(label: "Change Away", pitch: .changeup, location: .away),
         PresetCall(label: "Pitchout", pitch: .pitchout),
         PresetCall(label: "Pickoff 1B", pitch: .pickoff)
     ]

@@ -8,12 +8,16 @@ final class PresetTests: XCTestCase {
         XCTAssertEqual(presets.map(\.label), [
             "FB Away",
             "FB Up",
-            "Slider Away",
             "Curve Down",
+            "Curve Away",
             "Change Down",
-            "Waste",
+            "Change Away",
             "Pitchout",
             "Pickoff 1B"
         ])
+    }
+
+    func testPitchGridUsesMinimalFieldVocabulary() {
+        XCTAssertEqual(PitchType.pitchGridCases, [.fastball, .curveball, .changeup])
     }
 }

@@ -7,7 +7,7 @@ struct PitchGridView: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader("Pitch")
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-                ForEach(PitchType.allCases) { pitch in
+                ForEach(PitchType.pitchGridCases) { pitch in
                     Button(pitch.rawValue) {
                         selectedPitch = selectedPitch == pitch ? nil : pitch
                     }
