@@ -1,0 +1,22 @@
+{
+  "name": "dugoutcall-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "build:ios": "eas build --platform ios --profile production",
+    "submit:ios": "eas submit --platform ios --profile production",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "expo": "~54.0.0",
+    "expo-speech": "~14.0.0",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.0",
+    "typescript": "~5.9.2"
+  }
+}

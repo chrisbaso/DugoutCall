@@ -89,6 +89,31 @@ Production notes:
 
 ## iOS Setup
 
+### Expo/TestFlight Path
+
+For a no-Mac publishable iPhone build, use the Expo app in `mobile/`.
+
+```bash
+cd DugoutCall/mobile
+npm install
+npm run start
+```
+
+For TestFlight:
+
+```bash
+cd DugoutCall/mobile
+eas init
+eas build --platform ios --profile production
+eas submit --platform ios --profile production
+```
+
+The Expo app uses bundle identifier `com.chrisbaso.dugoutcall` and defaults to the hosted backend at `https://dugoutcall.onrender.com`.
+
+Current Expo MVP supports room creation/joining, pitch button relay, catcher listen-only mode, and text-to-speech playback. The Hold Talk control currently sends push-to-talk signaling; live voice streaming requires the next native media adapter step.
+
+### SwiftUI Reference Path
+
 1. Open `DugoutCall/ios/Package.swift` in Xcode 15 or newer.
 2. Select an iOS 17+ simulator or physical device.
 3. Run two app instances/devices: one coach and one catcher.

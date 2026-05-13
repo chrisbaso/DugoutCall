@@ -5,6 +5,10 @@
   "scripts": {
     "build": "node scripts/write-runtime-config.mjs",
     "vercel-build": "node scripts/write-runtime-config.mjs",
-    "test": "npm test --prefix server"
+    "test": "npm test --prefix server",
+    "mobile:start": "npm run start --prefix mobile",
+    "mobile:typecheck": "npm run typecheck --prefix mobile",
+    "mobile:build:ios": "npm run build:ios --prefix mobile",
+    "mobile:submit:ios": "npm run submit:ios --prefix mobile"
   }
 }

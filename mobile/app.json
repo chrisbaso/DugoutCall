@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "DugoutCall",
+    "slug": "dugoutcall",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "dugoutcall",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0b100d"
+    },
+    "newArchEnabled": true,
+    "ios": {
+      "bundleIdentifier": "com.chrisbaso.dugoutcall",
+      "buildNumber": "1",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSMicrophoneUsageDescription": "DugoutCall uses the microphone for coach push-to-talk during permitted one-way coach-to-catcher communication."
+      }
+    },
+    "extra": {
+      "backendUrl": "https://dugoutcall.onrender.com",
+      "eas": {
+        "projectId": "db0e8152-c984-4ea0-94ae-e0ef585059da"
+      }
+    },
+    "owner": "chrisbaso"
+  }
+}
