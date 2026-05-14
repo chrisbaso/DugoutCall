@@ -9,13 +9,24 @@
     "submit:ios": "eas submit --platform ios --profile production",
     "typecheck": "tsc --noEmit"
   },
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "react-native-webrtc"
+        ]
+      }
+    }
+  },
   "dependencies": {
+    "@config-plugins/react-native-webrtc": "13.0.0",
     "expo": "~54.0.0",
     "expo-speech": "~14.0.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-web": "^0.21.0"
+    "react-native-web": "^0.21.0",
+    "react-native-webrtc": "124.0.7"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",

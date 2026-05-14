@@ -13,6 +13,14 @@ import {
   TextInput,
   View
 } from "react-native";
+import {
+  mediaDevices,
+  MediaStream,
+  RTCIceCandidate,
+  RTCPeerConnection,
+  RTCSessionDescription,
+  RTCView
+} from "react-native-webrtc";
 
 type Role = "coach" | "catcher";
 type AppMode = "game" | "practice";
@@ -34,9 +42,29 @@ type PitchCallMessage = {
   timestamp: number;
 };
 
+type WebRTCOfferMessage = {
+  type: "webrtc_offer";
+  sdp: string;
+};
+
+type WebRTCAnswerMessage = {
+  type: "webrtc_answer";
+  sdp: string;
+};
+
+type ICECandidateMessage = {
+  type: "ice_candidate";
+  candidate: string;
+  sdpMid?: string;
+  sdpMLineIndex?: number;
+};
+
 type ServerMessage =
   | { type: "role_assigned"; code: string; role: Role; mode: AppMode; expiresAt: number }
   | PitchCallMessage
+  | WebRTCOfferMessage
+  | WebRTCAnswerMessage
+  | ICECandidateMessage
   | { type: "ptt_start"; timestamp: number }
   | { type: "ptt_stop"; timestamp: number }
   | { type: "heartbeat"; timestamp: number }
@@ -53,6 +81,12 @@ const defaultBackendUrl = "https://dugoutcall.onrender.com";
 const pitches = ["Fastball", "Curveball", "Change-up"];
 const locations = ["Up", "Down", "In", "Away", "Middle", "Up/In", "Up/Away", "Down/In", "Down/Away"];
 const contextButtons = ["0-0", "Ahead", "Behind", "2 Strikes", "Runner On"];
+const rtcConfiguration = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:global.stun.twilio.com:3478" }
+  ]
+};
 const presets: PresetCall[] = [
   { label: "FB Away", pitch: "Fastball", location: "Away" },
   { label: "FB Up", pitch: "Fastball", location: "Up" },
@@ -82,6 +116,11 @@ const phrase = (pitch: string, location?: string) => {
 
 export default function App() {
   const socketRef = useRef<WebSocket | null>(null);
+  const peerRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const localAudioAddedRef = useRef(false);
+  const pendingIceCandidatesRef = useRef<ICECandidateMessage[]>([]);
+  const creatingOfferRef = useRef(false);
   const lastSpeechAtRef = useRef(0);
   const [screen, setScreen] = useState<"role" | "coach" | "catcher">("role");
   const [role, setRole] = useState<Role | null>(null);
@@ -95,6 +134,8 @@ export default function App() {
   const [selectedContext, setSelectedContext] = useState("");
   const [lastCall, setLastCall] = useState<PitchCallMessage | null>(null);
   const [isTalking, setIsTalking] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState("Voice ready");
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [catcherState, setCatcherState] = useState("Waiting for call");
   const [lastHeard, setLastHeard] = useState("No pitch call yet.");
 
@@ -130,7 +171,20 @@ export default function App() {
     throw new Error(lastError);
   };
 
+  const closeVoiceSession = () => {
+    localStreamRef.current?.getTracks().forEach((track) => track.stop());
+    localStreamRef.current = null;
+    localAudioAddedRef.current = false;
+    pendingIceCandidatesRef.current = [];
+    peerRef.current?.close();
+    peerRef.current = null;
+    setRemoteStream(null);
+    setIsTalking(false);
+    setVoiceStatus("Voice ready");
+  };
+
   const disconnectSocket = () => {
+    closeVoiceSession();
     socketRef.current?.close();
     socketRef.current = null;
     setConnection("disconnected");
@@ -172,13 +226,30 @@ export default function App() {
       return;
     }
 
+    if (message.type === "webrtc_offer") {
+      void handleWebRTCOffer(message);
+      return;
+    }
+
+    if (message.type === "webrtc_answer") {
+      void handleWebRTCAnswer(message);
+      return;
+    }
+
+    if (message.type === "ice_candidate") {
+      void handleIceCandidate(message);
+      return;
+    }
+
     if (message.type === "ptt_start") {
       setCatcherState("Receiving voice");
+      setVoiceStatus("Receiving coach voice");
       return;
     }
 
     if (message.type === "ptt_stop") {
       setCatcherState("Waiting for call");
+      setVoiceStatus("Voice ready");
       return;
     }
 
@@ -194,6 +265,146 @@ export default function App() {
     }
     socketRef.current.send(JSON.stringify(message));
     return true;
+  };
+
+  const createPeerConnection = () => {
+    if (peerRef.current) return peerRef.current;
+
+    const peer = new RTCPeerConnection(rtcConfiguration);
+    peerRef.current = peer;
+
+    (peer as any).addEventListener("icecandidate", (event: any) => {
+      const candidate = event.candidate;
+      if (!candidate) return;
+      sendSocket({
+        type: "ice_candidate",
+        candidate: candidate.candidate,
+        sdpMid: candidate.sdpMid ?? undefined,
+        sdpMLineIndex: candidate.sdpMLineIndex ?? undefined
+      });
+    });
+
+    (peer as any).addEventListener("track", (event: any) => {
+      const [stream] = event.streams;
+      if (stream) {
+        setRemoteStream(stream);
+        setCatcherState("Receiving voice");
+        setVoiceStatus("Voice connected");
+      }
+    });
+
+    (peer as any).addEventListener("connectionstatechange", () => {
+      if (peer.connectionState === "connected") setVoiceStatus("Voice connected");
+      if (peer.connectionState === "connecting") setVoiceStatus("Connecting voice...");
+      if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+        setVoiceStatus("Voice disconnected");
+      }
+    });
+
+    return peer;
+  };
+
+  const addPendingIceCandidates = async () => {
+    const peer = peerRef.current;
+    if (!peer?.remoteDescription) return;
+
+    const candidates = pendingIceCandidatesRef.current.splice(0);
+    for (const candidate of candidates) {
+      await peer.addIceCandidate(
+        new RTCIceCandidate({
+          candidate: candidate.candidate,
+          sdpMid: candidate.sdpMid,
+          sdpMLineIndex: candidate.sdpMLineIndex
+        })
+      );
+    }
+  };
+
+  const handleWebRTCOffer = async (message: WebRTCOfferMessage) => {
+    if (role !== "catcher") return;
+
+    try {
+      const peer = createPeerConnection();
+      await peer.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: message.sdp }));
+      await addPendingIceCandidates();
+      const answer = await peer.createAnswer();
+      await peer.setLocalDescription(answer);
+      sendSocket({ type: "webrtc_answer", sdp: answer.sdp });
+      setVoiceStatus("Voice ready");
+    } catch (error) {
+      setVoiceStatus("Voice setup failed");
+      setStatus(error instanceof Error ? error.message : "Voice setup failed");
+    }
+  };
+
+  const handleWebRTCAnswer = async (message: WebRTCAnswerMessage) => {
+    if (role !== "coach" || !peerRef.current) return;
+
+    try {
+      await peerRef.current.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: message.sdp }));
+      await addPendingIceCandidates();
+      setVoiceStatus("Voice connected");
+    } catch (error) {
+      setVoiceStatus("Voice answer failed");
+      setStatus(error instanceof Error ? error.message : "Voice answer failed");
+    }
+  };
+
+  const handleIceCandidate = async (message: ICECandidateMessage) => {
+    const peer = peerRef.current;
+    if (!peer?.remoteDescription) {
+      pendingIceCandidatesRef.current.push(message);
+      return;
+    }
+
+    try {
+      await peer.addIceCandidate(
+        new RTCIceCandidate({
+          candidate: message.candidate,
+          sdpMid: message.sdpMid,
+          sdpMLineIndex: message.sdpMLineIndex
+        })
+      );
+    } catch {
+      setVoiceStatus("Voice network retrying");
+    }
+  };
+
+  const prepareCoachAudio = async () => {
+    const peer = createPeerConnection();
+    let stream = localStreamRef.current;
+
+    if (!stream) {
+      stream = await mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } as any,
+        video: false
+      });
+      localStreamRef.current = stream;
+    }
+
+    stream.getAudioTracks().forEach((track) => {
+      track.enabled = true;
+      if (!localAudioAddedRef.current) peer.addTrack(track, stream);
+    });
+    localAudioAddedRef.current = true;
+
+    if (!peer.localDescription && !creatingOfferRef.current) {
+      creatingOfferRef.current = true;
+      try {
+        const offer = await peer.createOffer({
+          offerToReceiveAudio: false,
+          offerToReceiveVideo: false
+        });
+        await peer.setLocalDescription(offer);
+        sendSocket({ type: "webrtc_offer", sdp: offer.sdp });
+      } finally {
+        creatingOfferRef.current = false;
+      }
+    }
   };
 
   const createRoom = async () => {
@@ -284,16 +495,42 @@ export default function App() {
     });
   };
 
-  const startTalk = () => {
-    setIsTalking(true);
-    setStatus("Voice signaling started");
-    sendSocket({ type: "ptt_start", timestamp: Date.now() });
+  const startTalk = async () => {
+    if (role !== "coach") return;
+    if (isTalking) return;
+    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+      setStatus("Connect catcher before talking");
+      return;
+    }
+
+    try {
+      setVoiceStatus("Starting microphone...");
+      await prepareCoachAudio();
+      localStreamRef.current?.getAudioTracks().forEach((track) => {
+        track.enabled = true;
+      });
+      setIsTalking(true);
+      setStatus("Live voice on");
+      setVoiceStatus("Transmitting");
+      sendSocket({ type: "ptt_start", timestamp: Date.now() });
+    } catch (error) {
+      setIsTalking(false);
+      setVoiceStatus("Microphone unavailable");
+      Alert.alert(
+        "Push-to-talk unavailable",
+        error instanceof Error ? error.message : "Check microphone permission and try again."
+      );
+    }
   };
 
   const stopTalk = () => {
     if (!isTalking) return;
+    localStreamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = false;
+    });
     setIsTalking(false);
-    setStatus("Voice signaling stopped");
+    setStatus("Live voice off");
+    setVoiceStatus("Voice ready");
     sendSocket({ type: "ptt_stop", timestamp: Date.now() });
   };
 
@@ -363,6 +600,7 @@ export default function App() {
             currentPhrase={currentPhrase}
             isTalking={isTalking}
             lastStatus={status}
+            voiceStatus={voiceStatus}
             onClear={() => {
               setSelectedPitch("");
               setSelectedLocation("");
@@ -389,11 +627,13 @@ export default function App() {
             catcherState={catcherState}
             joinCode={joinCode}
             lastHeard={lastHeard}
+            remoteStream={remoteStream}
             role={role}
             setJoinCode={setJoinCode}
             joinRoom={joinRoom}
             reset={reset}
             testAudio={() => speak("DugoutCall connected.")}
+            voiceStatus={voiceStatus}
           />
         )}
       </KeyboardAvoidingView>
@@ -419,6 +659,7 @@ function CoachScreen(props: {
   setSelectedLocation: (value: string) => void;
   setSelectedPitch: (value: string) => void;
   sendPreset: (pitch: string, location?: string) => void;
+  voiceStatus: string;
 }) {
   return (
     <View style={styles.flex}>
@@ -431,6 +672,7 @@ function CoachScreen(props: {
 
         <Text style={styles.selection}>{props.currentPhrase || "Select pitch and location"}</Text>
         <Text style={styles.statusLine}>{props.lastStatus}</Text>
+        <Text style={styles.voiceLine}>{props.voiceStatus}</Text>
 
         <Section title="Presets">
           <View style={styles.gridFour}>
@@ -516,11 +758,13 @@ function CatcherScreen(props: {
   catcherState: string;
   joinCode: string;
   lastHeard: string;
+  remoteStream: MediaStream | null;
   role: Role | null;
   setJoinCode: (value: string) => void;
   joinRoom: () => void;
   reset: () => void;
   testAudio: () => void;
+  voiceStatus: string;
 }) {
   const isJoined = props.role === "catcher" && props.code.length === 6;
 
@@ -553,6 +797,8 @@ function CatcherScreen(props: {
           </View>
           <Text style={styles.receiverState}>{props.catcherState}</Text>
           <Text style={styles.airPods}>AirPods connected if selected in iOS audio route</Text>
+          <Text style={styles.voiceLine}>{props.voiceStatus}</Text>
+          {props.remoteStream && <RTCView streamURL={props.remoteStream.toURL()} style={styles.hiddenRtcView} />}
           <Text style={styles.lastHeard}>{props.lastHeard}</Text>
           <Pressable style={styles.secondaryButton} onPress={props.testAudio}>
             <Text style={styles.secondaryButtonText}>Play test audio</Text>
@@ -744,6 +990,11 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 21
   },
+  hiddenRtcView: {
+    height: 1,
+    opacity: 0,
+    width: 1
+  },
   input: {
     backgroundColor: "#101912",
     borderColor: "#314133",
@@ -919,6 +1170,11 @@ const styles = StyleSheet.create({
   title: {
     color: "#f6f1dc",
     fontSize: 26,
+    fontWeight: "900"
+  },
+  voiceLine: {
+    color: "#f3b23f",
+    fontSize: 14,
     fontWeight: "900"
   }
 });

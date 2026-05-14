@@ -110,7 +110,7 @@ eas submit --platform ios --profile production
 
 The Expo app uses bundle identifier `com.chrisbaso.dugoutcall` and defaults to the hosted backend at `https://dugoutcall.onrender.com`.
 
-Current Expo MVP supports room creation/joining, pitch button relay, catcher listen-only mode, and text-to-speech playback. The Hold Talk control currently sends push-to-talk signaling; live voice streaming requires the next native media adapter step.
+Current Expo MVP supports room creation/joining, pitch button relay, catcher listen-only mode, text-to-speech playback, and one-way WebRTC push-to-talk in EAS/TestFlight builds.
 
 ### SwiftUI Reference Path
 
@@ -248,7 +248,7 @@ Practice Mode is present as a settings/admin toggle for future testing workflows
 - Native SwiftUI coach grid optimized around Fastball, Curveball, and Change-up.
 - Pitchout and Pickoff remain one-tap presets.
 - AVAudioSession configuration for coach push-to-talk and catcher playback.
-- Push-to-talk start/stop signaling is implemented. A production live voice stream should connect `PushToTalkService` to a WebRTC or LiveKit media transport before game use.
+- Expo/TestFlight push-to-talk streams coach microphone audio one-way to the catcher phone through WebRTC while Hold Talk is pressed.
 - Native SwiftUI push-to-talk still needs the iOS WebRTC or LiveKit media transport adapter.
 
 ## Testing
@@ -278,7 +278,7 @@ swift test
 4. Coach sends Fastball Away.
 5. Catcher hears "Fastball away."
 6. Coach presses and holds Talk.
-7. Catcher hears coach voice after WebRTC/LiveKit media transport is configured.
+7. Catcher hears coach voice in the Expo/TestFlight build.
 8. Coach releases Talk.
 9. Voice stops.
 10. Catcher cannot talk back in Game Mode.
@@ -294,11 +294,11 @@ swift test
 - DugoutCall is not a certified officiating or legal compliance product.
 - MVP does not support multiple catchers or pitcher receivers.
 - MVP does not support Android.
-- Live voice needs a WebRTC or LiveKit media adapter wired into `PushToTalkService` before production game use.
+- Reliable live voice on some cellular/field networks may require a TURN server in addition to public STUN.
 
 ## Future Features
 
-- LiveKit or WebRTC one-way media transport implementation.
+- TURN-backed field voice reliability.
 - QR scanner join flow.
 - Reconnect backoff and room recovery UI.
 - Optional local-only pitch history, off by default.

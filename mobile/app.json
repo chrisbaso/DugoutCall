@@ -12,10 +12,10 @@
       "resizeMode": "contain",
       "backgroundColor": "#0b100d"
     },
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "bundleIdentifier": "com.chrisbaso.dugoutcall",
-      "buildNumber": "3",
+      "buildNumber": "4",
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -28,6 +28,9 @@
         "projectId": "db0e8152-c984-4ea0-94ae-e0ef585059da"
       }
     },
-    "owner": "chrisbaso"
+    "owner": "chrisbaso",
+    "plugins": [
+      "@config-plugins/react-native-webrtc"
+    ]
   }
 }

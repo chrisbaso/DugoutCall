@@ -9,7 +9,7 @@ This is the Expo/React Native iPhone app for DugoutCall. It is the publishable m
 - Coach sends pitch/location calls.
 - Catcher hears pitch calls with device text-to-speech.
 - Catcher UI is listen-only in Game Mode.
-- Push-to-talk button sends start/stop signaling. Live voice streaming still needs the next native media adapter step.
+- Push-to-talk uses native WebRTC audio in EAS/TestFlight builds. The coach mic streams one-way to the catcher phone while Hold Talk is pressed.
 
 Default backend:
 
@@ -25,7 +25,7 @@ npm install
 npm run start
 ```
 
-Then open the project in Expo Go on an iPhone. For a two-phone test, open the same Expo project on both iPhones and use Coach Mode on one phone and Catcher Mode on the other.
+Then open the project in Expo Go on an iPhone for UI and pitch-call testing. Native push-to-talk requires an EAS development/production build because `react-native-webrtc` includes custom native code and does not run inside Expo Go.
 
 ## TestFlight Build
 
@@ -67,6 +67,9 @@ Apple Developer/App Store Connect setup still needs an app record for `DugoutCal
 
 ## Apple TestFlight Notes
 
+- Push-to-talk needs two physical iPhones on the TestFlight build.
+- The catcher iPhone should have AirPods selected as its current audio route before joining.
+- WebRTC uses public STUN servers in the app. Some field/cellular networks may require adding a TURN server for more reliable live voice.
 - First external TestFlight distribution may require beta review.
 - Internal TestFlight testers are faster for the first field test.
 - TestFlight builds expire after 90 days.
