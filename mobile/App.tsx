@@ -1,5 +1,6 @@
+import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from "expo-av";
 import * as Speech from "expo-speech";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -78,6 +79,7 @@ type PresetCall = {
   location?: string;
 };
 
+const testTone = require("./assets/test-tone.wav");
 const defaultBackendUrl = "https://dugoutcall.onrender.com";
 const pitches = ["Fastball", "Curveball", "Change-up"];
 const locations = ["Up", "Down", "In", "Away", "Middle", "Up/In", "Up/Away", "Down/In", "Down/Away"];
@@ -158,12 +160,54 @@ export default function App() {
   const [lastHeard, setLastHeard] = useState("No pitch call yet.");
   const [lastNetworkEvent, setLastNetworkEvent] = useState("No room joined");
 
+  useEffect(() => {
+    void configureAudioForPlayback();
+  }, []);
+
   const currentPhrase = useMemo(
     () => phrase(selectedPitch, selectedLocation),
     [selectedPitch, selectedLocation]
   );
 
   const apiUrl = (path: string) => `${normalizeBaseUrl(backendUrl)}${path}`;
+
+  const configureAudioForPlayback = async () => {
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+      playThroughEarpieceAndroid: false,
+      playsInSilentModeIOS: true,
+      shouldDuckAndroid: false,
+      staysActiveInBackground: false
+    });
+    setVoiceStatus("Audio playback ready");
+  };
+
+  const configureAudioForTalk = async () => {
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+      playThroughEarpieceAndroid: false,
+      playsInSilentModeIOS: true,
+      shouldDuckAndroid: false,
+      staysActiveInBackground: false
+    });
+  };
+
+  const playTone = async () => {
+    await configureAudioForPlayback();
+    const { sound } = await Audio.Sound.createAsync(testTone, {
+      shouldPlay: true,
+      volume: 1
+    });
+    sound.setOnPlaybackStatusUpdate((playbackStatus) => {
+      if (playbackStatus.isLoaded && playbackStatus.didJustFinish) {
+        void sound.unloadAsync();
+      }
+    });
+  };
 
   const requestJson = async <T,>(path: string, init: RequestInit): Promise<T> => {
     let lastError = "Network request failed";
@@ -204,7 +248,7 @@ export default function App() {
     }
     setRemoteStream(null);
     setIsTalking(false);
-    setVoiceStatus("Voice ready");
+    void configureAudioForPlayback();
   };
 
   const disconnectSocket = () => {
@@ -375,6 +419,7 @@ export default function App() {
     if (roleRef.current !== "catcher") return;
 
     try {
+      await configureAudioForPlayback();
       activateWebRTCAudio();
       const peer = createPeerConnection();
       await peer.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: message.sdp }));
@@ -423,6 +468,7 @@ export default function App() {
   };
 
   const prepareCoachAudio = async () => {
+    await configureAudioForTalk();
     activateWebRTCAudio();
     const peer = createPeerConnection();
     let stream = localStreamRef.current;
@@ -541,14 +587,40 @@ export default function App() {
   };
 
   const speak = (text: string) => {
-    const now = Date.now();
-    if (now - lastSpeechAtRef.current < 2000) Speech.stop();
-    lastSpeechAtRef.current = now;
-    Speech.speak(text, {
-      rate: 0.48,
-      pitch: 1,
-      volume: 1
-    });
+    void (async () => {
+      try {
+        await configureAudioForPlayback();
+        const now = Date.now();
+        if (now - lastSpeechAtRef.current < 2000) Speech.stop();
+        lastSpeechAtRef.current = now;
+        setVoiceStatus("Speaking test/call audio");
+        Speech.speak(text, {
+          onDone: () => setVoiceStatus("Audio playback ready"),
+          onError: () => setVoiceStatus("Speech playback failed"),
+          onStopped: () => setVoiceStatus("Audio playback ready"),
+          pitch: 1,
+          rate: 0.48,
+          volume: 1
+        });
+      } catch (error) {
+        setVoiceStatus("Audio setup failed");
+        setStatus(error instanceof Error ? error.message : "Audio setup failed");
+      }
+    })();
+  };
+
+  const playTestAudio = () => {
+    setLastHeard("Playing test audio...");
+    setLastNetworkEvent(`Test audio tapped at ${compactClock()}`);
+    void playTone()
+      .then(() => {
+        setTimeout(() => speak("DugoutCall connected."), 450);
+      })
+      .catch((error) => {
+        setVoiceStatus("Tone playback failed");
+        setStatus(error instanceof Error ? error.message : "Tone playback failed");
+        speak("DugoutCall connected.");
+      });
   };
 
   const startTalk = async () => {
@@ -584,6 +656,7 @@ export default function App() {
     localStreamRef.current?.getAudioTracks().forEach((track) => {
       track.enabled = false;
     });
+    void configureAudioForPlayback();
     setIsTalking(false);
     setStatus("Live voice off");
     setVoiceStatus("Voice ready");
@@ -693,7 +766,7 @@ export default function App() {
             setJoinCode={setJoinCode}
             joinRoom={joinRoom}
             reset={reset}
-            testAudio={() => speak("DugoutCall connected.")}
+            testAudio={playTestAudio}
             voiceStatus={voiceStatus}
           />
         )}
