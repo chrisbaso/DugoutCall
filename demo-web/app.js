@@ -30,6 +30,7 @@ const state = {
   remoteDescriptionSet: false,
   pendingCandidates: [],
   audioUnlocked: false,
+  diagnosticsTimer: null,
   clientConfig: {
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
   },
@@ -62,6 +63,11 @@ function setNetwork(text, connected = false) {
 
 function setCatcherDiagnostic(text) {
   const element = $("catcherDiagnostics");
+  if (element) element.textContent = `${clock()} - ${text}`;
+}
+
+function setServerDiagnostic(text) {
+  const element = $("serverDiagnostics");
   if (element) element.textContent = `${clock()} - ${text}`;
 }
 
@@ -186,8 +192,30 @@ async function joinRoom() {
   state.roomCode = code;
   $("catcherBannerCode").textContent = code;
   connectSocket("catcher", code, "Catcher");
+  startDiagnosticsPolling(code);
   show("catcherScreen");
   playText("DugoutCall connected.");
+}
+
+function startDiagnosticsPolling(code) {
+  if (state.diagnosticsTimer) window.clearInterval(state.diagnosticsTimer);
+  pollDiagnostics(code);
+  state.diagnosticsTimer = window.setInterval(() => pollDiagnostics(code), 2000);
+}
+
+async function pollDiagnostics(code) {
+  try {
+    const response = await fetchJSONWithRetry(`/rooms/${code}/diagnostics`, { method: "GET" });
+    const pitchCount = response.counters?.pitch_call || 0;
+    const socketJoins = response.counters?.socket_joined || 0;
+    const lastEvent = response.recentEvents?.at(-1);
+    const last = lastEvent
+      ? `${lastEvent.kind}${lastEvent.role ? `/${lastEvent.role}` : ""}${typeof lastEvent.recipientCount === "number" ? ` recipients=${lastEvent.recipientCount}` : ""}`
+      : "none";
+    setServerDiagnostic(`Server: pitches=${pitchCount}, socketJoins=${socketJoins}, last=${last}`);
+  } catch (error) {
+    setServerDiagnostic(`Server diagnostics unavailable: ${error.message}`);
+  }
 }
 
 function connectSocket(role, code, displayName = role) {
@@ -636,6 +664,7 @@ $("testAudio").onclick = () => {
 };
 $("disconnect").onclick = () => {
   state.socket?.close();
+  if (state.diagnosticsTimer) window.clearInterval(state.diagnosticsTimer);
   $("catcherState").textContent = "Disconnected";
   $("catcherSubstate").textContent = "Emergency disconnect";
 };

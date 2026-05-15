@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
+import { RoomDiagnostics } from '../src/diagnostics.js';
 import { RoomStore } from '../src/rooms.js';
 import { attachWebSocketServer } from '../src/websocket.js';
 
@@ -142,6 +143,63 @@ describe('websocket relay', () => {
     await expect(answerDelivered).resolves.toMatchObject({
       type: 'webrtc_answer',
       sdp: 'catcher-answer'
+    });
+
+    coach.close();
+    catcher.close();
+  });
+
+  it('records room diagnostics for coach-originated pitch relays', async () => {
+    const diagnostics = new RoomDiagnostics();
+    const store = new RoomStore({ ttlMs: 60_000, now: () => 1_000 });
+    const room = store.createRoom({ coachName: 'Coach B' });
+
+    server = http.createServer();
+    attachWebSocketServer(server, store, diagnostics);
+
+    await new Promise<void>((resolve) => server!.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('missing server address');
+
+    const url = `ws://127.0.0.1:${address.port}`;
+    const coach = new WebSocket(url);
+    const catcher = new WebSocket(url);
+
+    await Promise.all([
+      new Promise((resolve) => coach.once('open', resolve)),
+      new Promise((resolve) => catcher.once('open', resolve))
+    ]);
+
+    const coachAssigned = onceMessage(coach);
+    const catcherAssigned = onceMessage(catcher);
+    coach.send(JSON.stringify({ type: 'join_room', code: room.code, role: 'coach' }));
+    catcher.send(JSON.stringify({ type: 'join_room', code: room.code, role: 'catcher' }));
+    await Promise.all([coachAssigned, catcherAssigned]);
+
+    const delivered = onceMessage(catcher);
+    coach.send(
+      JSON.stringify({
+        type: 'pitch_call',
+        id: 'call-1',
+        pitch: 'Fastball',
+        spokenText: 'Fastball',
+        timestamp: 123456789
+      })
+    );
+    await delivered;
+
+    expect(diagnostics.snapshot(room.code)).toMatchObject({
+      counters: {
+        socket_joined: 2,
+        pitch_call: 1
+      },
+      recentEvents: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'pitch_call',
+          recipientCount: 1,
+          role: 'coach'
+        })
+      ])
     });
 
     coach.close();

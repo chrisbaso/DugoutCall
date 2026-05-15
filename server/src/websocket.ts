@@ -2,6 +2,7 @@ import type http from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { ClientMessage, ServerMessage, UserRole } from './types.js';
 import type { RoomStore } from './rooms.js';
+import type { RoomDiagnostics } from './diagnostics.js';
 import { isSignalingMessage } from './signaling.js';
 
 interface Session {
@@ -14,20 +15,34 @@ const send = (socket: WebSocket, message: ServerMessage) => {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
 };
 
-export function attachWebSocketServer(server: http.Server, rooms: RoomStore): WebSocketServer {
+export function attachWebSocketServer(
+  server: http.Server,
+  rooms: RoomStore,
+  diagnostics?: RoomDiagnostics
+): WebSocketServer {
   const wss = new WebSocketServer({ server });
   const sessions = new Map<WebSocket, Session>();
 
-  const relayToCatcher = (code: string, message: ServerMessage) => {
+  const relayToCatcher = (code: string, message: ServerMessage): number => {
+    let recipients = 0;
     for (const session of sessions.values()) {
-      if (session.code === code && session.role === 'catcher') send(session.socket, message);
+      if (session.code === code && session.role === 'catcher') {
+        send(session.socket, message);
+        recipients += 1;
+      }
     }
+    return recipients;
   };
 
-  const relayToCoach = (code: string, message: ServerMessage) => {
+  const relayToCoach = (code: string, message: ServerMessage): number => {
+    let recipients = 0;
     for (const session of sessions.values()) {
-      if (session.code === code && session.role === 'coach') send(session.socket, message);
+      if (session.code === code && session.role === 'coach') {
+        send(session.socket, message);
+        recipients += 1;
+      }
     }
+    return recipients;
   };
 
   wss.on('connection', (socket) => {
@@ -46,6 +61,11 @@ export function attachWebSocketServer(server: http.Server, rooms: RoomStore): We
           const room = rooms.getRoom(message.code);
           session.code = message.code;
           session.role = participant.role;
+          diagnostics?.record(message.code, {
+            kind: 'socket_joined',
+            role: participant.role,
+            detail: message.displayName
+          });
           send(socket, {
             type: 'role_assigned',
             code: message.code,
@@ -62,16 +82,21 @@ export function attachWebSocketServer(server: http.Server, rooms: RoomStore): We
         }
 
         if (message.type === 'heartbeat') {
+          diagnostics?.record(session.code, { kind: 'heartbeat', role: session.role });
           send(socket, { type: 'heartbeat', timestamp: Date.now() });
           return;
         }
 
         if (isSignalingMessage(message)) {
-          if (session.role === 'coach') {
-            relayToCatcher(session.code, message);
-          } else {
-            relayToCoach(session.code, message);
-          }
+          const recipients =
+            session.role === 'coach'
+              ? relayToCatcher(session.code, message)
+              : relayToCoach(session.code, message);
+          diagnostics?.record(session.code, {
+            kind: message.type,
+            role: session.role,
+            recipientCount: recipients
+          });
           return;
         }
 
@@ -81,14 +106,25 @@ export function attachWebSocketServer(server: http.Server, rooms: RoomStore): We
         }
 
         if (message.type === 'pitch_call') {
-          relayToCatcher(session.code, message);
+          const recipients = relayToCatcher(session.code, message);
+          diagnostics?.record(session.code, {
+            kind: 'pitch_call',
+            role: session.role,
+            detail: message.spokenText,
+            recipientCount: recipients
+          });
           return;
         }
 
         if (message.type === 'ptt_start' || message.type === 'ptt_stop') {
-          relayToCatcher(session.code, {
+          const recipients = relayToCatcher(session.code, {
             type: message.type,
             timestamp: message.timestamp ?? Date.now()
+          });
+          diagnostics?.record(session.code, {
+            kind: message.type,
+            role: session.role,
+            recipientCount: recipients
           });
         }
       } catch (error) {
@@ -100,6 +136,12 @@ export function attachWebSocketServer(server: http.Server, rooms: RoomStore): We
     });
 
     socket.on('close', () => {
+      if (session.code && session.role) {
+        diagnostics?.record(session.code, {
+          kind: 'socket_closed',
+          role: session.role
+        });
+      }
       sessions.delete(socket);
     });
   });

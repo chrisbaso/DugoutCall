@@ -1,4 +1,4 @@
-const CACHE_NAME = "dugoutcall-demo-v9";
+const CACHE_NAME = "dugoutcall-demo-v10";
 const ASSETS = ["/", "/index.html", "/styles.css", "/app.js", "/runtime-config.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
