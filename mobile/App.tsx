@@ -114,6 +114,13 @@ const phrase = (pitch: string, location?: string) => {
   return `${pitch} ${location.replace("/", " ").toLowerCase()}`;
 };
 
+const compactClock = () =>
+  new Date().toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+
 export default function App() {
   const socketRef = useRef<WebSocket | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -122,6 +129,8 @@ export default function App() {
   const pendingIceCandidatesRef = useRef<ICECandidateMessage[]>([]);
   const creatingOfferRef = useRef(false);
   const lastSpeechAtRef = useRef(0);
+  const roleRef = useRef<Role | null>(null);
+  const roomCodeRef = useRef("");
   const [screen, setScreen] = useState<"role" | "coach" | "catcher">("role");
   const [role, setRole] = useState<Role | null>(null);
   const [backendUrl, setBackendUrl] = useState(defaultBackendUrl);
@@ -138,6 +147,7 @@ export default function App() {
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [catcherState, setCatcherState] = useState("Waiting for call");
   const [lastHeard, setLastHeard] = useState("No pitch call yet.");
+  const [lastNetworkEvent, setLastNetworkEvent] = useState("No room joined");
 
   const currentPhrase = useMemo(
     () => phrase(selectedPitch, selectedLocation),
@@ -190,48 +200,67 @@ export default function App() {
     setConnection("disconnected");
   };
 
+  const setCurrentRole = (nextRole: Role | null) => {
+    roleRef.current = nextRole;
+    setRole(nextRole);
+  };
+
   const connectSocket = (nextRole: Role, code: string, displayName: string) => {
     disconnectSocket();
+    roleRef.current = nextRole;
+    roomCodeRef.current = code;
     setConnection("connecting");
+    setLastNetworkEvent(`Connecting ${nextRole} socket...`);
     const socket = new WebSocket(websocketUrl(backendUrl));
     socketRef.current = socket;
 
     socket.onopen = () => {
       setConnection("connected");
+      setLastNetworkEvent(`Socket joined ${code} at ${compactClock()}`);
       socket.send(JSON.stringify({ type: "join_room", code, role: nextRole, displayName }));
     };
 
     socket.onmessage = (event) => {
-      const message = JSON.parse(event.data) as ServerMessage;
-      handleServerMessage(message);
+      try {
+        const message = JSON.parse(event.data) as ServerMessage;
+        handleServerMessage(message);
+      } catch {
+        setLastNetworkEvent(`Bad network message at ${compactClock()}`);
+      }
     };
 
     socket.onerror = () => {
       setStatus("Connection error");
+      setLastNetworkEvent(`Socket error at ${compactClock()}`);
     };
 
     socket.onclose = () => {
       setConnection("disconnected");
+      setLastNetworkEvent(`Socket disconnected at ${compactClock()}`);
     };
   };
 
   const handleServerMessage = (message: ServerMessage) => {
     if (message.type === "role_assigned") {
       setStatus(`${message.role === "coach" ? "Coach" : "Catcher"} connected`);
+      setLastNetworkEvent(`${message.role} socket confirmed at ${compactClock()}`);
       return;
     }
 
     if (message.type === "pitch_call") {
+      setLastNetworkEvent(`Pitch received at ${compactClock()}`);
       receivePitchCall(message.spokenText);
       return;
     }
 
     if (message.type === "webrtc_offer") {
+      setLastNetworkEvent(`Voice offer received at ${compactClock()}`);
       void handleWebRTCOffer(message);
       return;
     }
 
     if (message.type === "webrtc_answer") {
+      setLastNetworkEvent(`Voice answer received at ${compactClock()}`);
       void handleWebRTCAnswer(message);
       return;
     }
@@ -244,23 +273,27 @@ export default function App() {
     if (message.type === "ptt_start") {
       setCatcherState("Receiving voice");
       setVoiceStatus("Receiving coach voice");
+      setLastNetworkEvent(`Talk started at ${compactClock()}`);
       return;
     }
 
     if (message.type === "ptt_stop") {
       setCatcherState("Waiting for call");
       setVoiceStatus("Voice ready");
+      setLastNetworkEvent(`Talk stopped at ${compactClock()}`);
       return;
     }
 
     if (message.type === "error") {
       setStatus(message.message);
+      setLastNetworkEvent(`Error: ${message.message}`);
     }
   };
 
   const sendSocket = (message: unknown) => {
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       setStatus("Not connected");
+      setLastNetworkEvent(`Send blocked: socket offline at ${compactClock()}`);
       return false;
     }
     socketRef.current.send(JSON.stringify(message));
@@ -321,7 +354,7 @@ export default function App() {
   };
 
   const handleWebRTCOffer = async (message: WebRTCOfferMessage) => {
-    if (role !== "catcher") return;
+    if (roleRef.current !== "catcher") return;
 
     try {
       const peer = createPeerConnection();
@@ -338,7 +371,7 @@ export default function App() {
   };
 
   const handleWebRTCAnswer = async (message: WebRTCAnswerMessage) => {
-    if (role !== "coach" || !peerRef.current) return;
+    if (roleRef.current !== "coach" || !peerRef.current) return;
 
     try {
       await peerRef.current.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: message.sdp }));
@@ -415,7 +448,8 @@ export default function App() {
         body: JSON.stringify({ coachName: "Coach", teamName: "DugoutCall", mode: "game" })
       });
       setRoom(response);
-      setRole("coach");
+      roomCodeRef.current = response.code;
+      setCurrentRole("coach");
       setScreen("coach");
       connectSocket("coach", response.code, "Coach");
     } catch (error) {
@@ -438,7 +472,8 @@ export default function App() {
         body: JSON.stringify({ role: "catcher", displayName: "Catcher" })
       });
       setRoom(response);
-      setRole("catcher");
+      roomCodeRef.current = code;
+      setCurrentRole("catcher");
       setScreen("catcher");
       setCatcherState("Connected");
       connectSocket("catcher", code, "Catcher");
@@ -467,6 +502,7 @@ export default function App() {
     if (sendSocket(message)) {
       setLastCall(message);
       setStatus(`Sent: ${message.spokenText}`);
+      setLastNetworkEvent(`Pitch sent at ${compactClock()}`);
     }
   };
 
@@ -496,7 +532,7 @@ export default function App() {
   };
 
   const startTalk = async () => {
-    if (role !== "coach") return;
+    if (roleRef.current !== "coach") return;
     if (isTalking) return;
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       setStatus("Connect catcher before talking");
@@ -538,11 +574,13 @@ export default function App() {
     Speech.stop();
     disconnectSocket();
     setRoom(null);
-    setRole(null);
+    setCurrentRole(null);
+    roomCodeRef.current = "";
     setScreen("role");
     setStatus("Ready");
     setCatcherState("Waiting for call");
     setLastHeard("No pitch call yet.");
+    setLastNetworkEvent("No room joined");
   };
 
   return (
@@ -584,7 +622,7 @@ export default function App() {
             <Pressable
               style={styles.secondaryButton}
               onPress={() => {
-                setRole("catcher");
+                setCurrentRole("catcher");
                 setScreen("catcher");
               }}
             >
@@ -611,6 +649,7 @@ export default function App() {
             onSend={() => sendPitchCall(selectedPitch, selectedLocation)}
             onStartTalk={startTalk}
             onStopTalk={stopTalk}
+            lastNetworkEvent={lastNetworkEvent}
             selectedContext={selectedContext}
             selectedLocation={selectedLocation}
             selectedPitch={selectedPitch}
@@ -627,6 +666,7 @@ export default function App() {
             catcherState={catcherState}
             joinCode={joinCode}
             lastHeard={lastHeard}
+            lastNetworkEvent={lastNetworkEvent}
             remoteStream={remoteStream}
             role={role}
             setJoinCode={setJoinCode}
@@ -646,6 +686,7 @@ function CoachScreen(props: {
   currentPhrase: string;
   isTalking: boolean;
   lastStatus: string;
+  lastNetworkEvent: string;
   onClear: () => void;
   onRepeat: () => void;
   onReset: () => void;
@@ -672,6 +713,7 @@ function CoachScreen(props: {
 
         <Text style={styles.selection}>{props.currentPhrase || "Select pitch and location"}</Text>
         <Text style={styles.statusLine}>{props.lastStatus}</Text>
+        <Text style={styles.statusLine}>{props.lastNetworkEvent}</Text>
         <Text style={styles.voiceLine}>{props.voiceStatus}</Text>
 
         <Section title="Presets">
@@ -758,6 +800,7 @@ function CatcherScreen(props: {
   catcherState: string;
   joinCode: string;
   lastHeard: string;
+  lastNetworkEvent: string;
   remoteStream: MediaStream | null;
   role: Role | null;
   setJoinCode: (value: string) => void;
@@ -798,6 +841,7 @@ function CatcherScreen(props: {
           <Text style={styles.receiverState}>{props.catcherState}</Text>
           <Text style={styles.airPods}>AirPods connected if selected in iOS audio route</Text>
           <Text style={styles.voiceLine}>{props.voiceStatus}</Text>
+          <Text style={styles.statusLine}>{props.lastNetworkEvent}</Text>
           {props.remoteStream && <RTCView streamURL={props.remoteStream.toURL()} style={styles.hiddenRtcView} />}
           <Text style={styles.lastHeard}>{props.lastHeard}</Text>
           <Pressable style={styles.secondaryButton} onPress={props.testAudio}>
