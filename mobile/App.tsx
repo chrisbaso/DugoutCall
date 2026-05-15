@@ -16,6 +16,7 @@ import {
 import {
   mediaDevices,
   MediaStream,
+  RTCAudioSession,
   RTCIceCandidate,
   RTCPeerConnection,
   RTCSessionDescription,
@@ -121,6 +122,14 @@ const compactClock = () =>
     second: "2-digit"
   });
 
+const activateWebRTCAudio = () => {
+  try {
+    RTCAudioSession.audioSessionDidActivate();
+  } catch {
+    // The WebRTC native module can still manage audio on platforms where this is a no-op.
+  }
+};
+
 export default function App() {
   const socketRef = useRef<WebSocket | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -188,6 +197,11 @@ export default function App() {
     pendingIceCandidatesRef.current = [];
     peerRef.current?.close();
     peerRef.current = null;
+    try {
+      RTCAudioSession.audioSessionDidDeactivate();
+    } catch {
+      // Audio session cleanup is best-effort.
+    }
     setRemoteStream(null);
     setIsTalking(false);
     setVoiceStatus("Voice ready");
@@ -303,6 +317,7 @@ export default function App() {
   const createPeerConnection = () => {
     if (peerRef.current) return peerRef.current;
 
+    activateWebRTCAudio();
     const peer = new RTCPeerConnection(rtcConfiguration);
     peerRef.current = peer;
 
@@ -320,6 +335,9 @@ export default function App() {
     (peer as any).addEventListener("track", (event: any) => {
       const [stream] = event.streams;
       if (stream) {
+        (stream.getAudioTracks() as any[]).forEach((track) => {
+          (track as any)._setVolume?.(10);
+        });
         setRemoteStream(stream);
         setCatcherState("Receiving voice");
         setVoiceStatus("Voice connected");
@@ -357,6 +375,7 @@ export default function App() {
     if (roleRef.current !== "catcher") return;
 
     try {
+      activateWebRTCAudio();
       const peer = createPeerConnection();
       await peer.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: message.sdp }));
       await addPendingIceCandidates();
@@ -404,6 +423,7 @@ export default function App() {
   };
 
   const prepareCoachAudio = async () => {
+    activateWebRTCAudio();
     const peer = createPeerConnection();
     let stream = localStreamRef.current;
 

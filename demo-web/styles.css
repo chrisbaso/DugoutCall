@@ -123,6 +123,7 @@ h3 {
 .room-card,
 .banner span,
 .spoken-log,
+.diagnostics-log,
 .notice {
   border: 1px solid var(--line);
   background: rgba(23, 35, 28, 0.94);
@@ -218,6 +219,7 @@ h3 {
 
 .banner span,
 .spoken-log,
+.diagnostics-log,
 .notice {
   color: var(--muted);
   font-weight: 850;
@@ -345,6 +347,14 @@ h3 {
   color: var(--text);
   margin: 18px 0;
   min-height: 76px;
+  text-align: left;
+}
+
+.diagnostics-log {
+  color: var(--warning);
+  font-size: 13px;
+  margin: -10px 0 12px;
+  min-height: 46px;
   text-align: left;
 }
 

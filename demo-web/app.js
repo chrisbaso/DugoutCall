@@ -29,6 +29,7 @@ const state = {
   peer: null,
   remoteDescriptionSet: false,
   pendingCandidates: [],
+  audioUnlocked: false,
   clientConfig: {
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
   },
@@ -38,6 +39,7 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const now = () => Date.now();
+const clock = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
 const configuredServerURL = () => window.DUGOUTCALL_CONFIG?.serverUrl?.replace(/\/$/, "") || "";
 const apiURL = (path) => `${configuredServerURL()}${path}`;
 const baseURL = () => configuredServerURL() || window.location.origin;
@@ -56,6 +58,11 @@ function show(screenId) {
 function setNetwork(text, connected = false) {
   $("networkBadge").textContent = text;
   $("networkBadge").classList.toggle("connected", connected);
+}
+
+function setCatcherDiagnostic(text) {
+  const element = $("catcherDiagnostics");
+  if (element) element.textContent = `${clock()} - ${text}`;
 }
 
 function phrase(pitch, location) {
@@ -190,14 +197,19 @@ function connectSocket(role, code, displayName = role) {
 
   state.socket.onopen = () => {
     setNetwork("Connected", true);
+    if (role === "catcher") setCatcherDiagnostic(`Socket opened for room ${code}`);
     state.socket.send(JSON.stringify({ type: "join_room", code, role, displayName }));
   };
   state.socket.onclose = () => {
     setNetwork("Disconnected");
     if (role === "catcher") $("catcherConnection").textContent = "Disconnected";
+    if (role === "catcher") setCatcherDiagnostic("Socket disconnected");
     if (role === "coach") $("coachConnection").textContent = "Disconnected";
   };
-  state.socket.onerror = () => setNetwork("Socket error");
+  state.socket.onerror = () => {
+    setNetwork("Socket error");
+    if (role === "catcher") setCatcherDiagnostic("Socket error");
+  };
   state.socket.onmessage = (event) => handleMessage(JSON.parse(event.data));
 }
 
@@ -211,29 +223,39 @@ function send(message) {
 function handleMessage(message) {
   if (message.type === "role_assigned") {
     setNetwork("Connected", true);
+    if (message.role === "catcher") {
+      $("catcherConnection").textContent = "Connected";
+      setCatcherDiagnostic(`Catcher confirmed in room ${message.code}`);
+    }
     return;
   }
   if (message.type === "pitch_call") {
+    setCatcherDiagnostic(`Pitch message received: ${message.spokenText}`);
     receivePitchCall(message.spokenText);
     return;
   }
   if (message.type === "ptt_start") {
     $("catcherSubstate").textContent = "Receiving voice";
+    setCatcherDiagnostic("Push-to-talk started");
     return;
   }
   if (message.type === "ptt_stop") {
     $("catcherSubstate").textContent = "Waiting for call";
+    setCatcherDiagnostic("Push-to-talk stopped");
     return;
   }
   if (message.type === "webrtc_offer") {
+    setCatcherDiagnostic("WebRTC offer received");
     handleOffer(message.sdp);
     return;
   }
   if (message.type === "webrtc_answer") {
+    setCatcherDiagnostic("WebRTC answer received");
     handleAnswer(message.sdp);
     return;
   }
   if (message.type === "ice_candidate") {
+    setCatcherDiagnostic("ICE candidate received");
     handleIceCandidate(message);
   }
 }
@@ -282,6 +304,17 @@ function playText(text) {
   window.speechSynthesis.speak(utterance);
 }
 
+async function unlockBrowserAudio() {
+  state.audioUnlocked = true;
+  try {
+    const remoteAudio = $("remoteAudio");
+    remoteAudio.muted = false;
+    await remoteAudio.play();
+  } catch {
+    // The element may not have a stream yet; the user gesture still helps unlock future playback.
+  }
+}
+
 function createPeer() {
   const peer = new RTCPeerConnection({
     iceServers: state.clientConfig.iceServers
@@ -296,10 +329,19 @@ function createPeer() {
     });
   };
   peer.ontrack = (event) => {
+    setCatcherDiagnostic("Remote voice track received");
     $("remoteAudio").srcObject = event.streams[0];
+    $("remoteAudio").muted = false;
     $("remoteAudio").play().catch(() => {
       $("catcherSubstate").textContent = "Tap Play test audio to unlock audio";
+      setCatcherDiagnostic("Browser blocked voice autoplay; tap Play test audio");
     });
+  };
+  peer.oniceconnectionstatechange = () => {
+    if (state.role === "catcher") setCatcherDiagnostic(`Voice ICE state: ${peer.iceConnectionState}`);
+  };
+  peer.onconnectionstatechange = () => {
+    if (state.role === "catcher") setCatcherDiagnostic(`Voice connection: ${peer.connectionState}`);
   };
   return peer;
 }
@@ -360,20 +402,29 @@ async function ensureCatcherPeer() {
 }
 
 async function handleOffer(sdp) {
-  await ensureCatcherPeer();
-  await state.peer.setRemoteDescription({ type: "offer", sdp });
-  state.remoteDescriptionSet = true;
-  await flushPendingCandidates();
-  const answer = await state.peer.createAnswer();
-  await state.peer.setLocalDescription(answer);
-  send({ type: "webrtc_answer", sdp: answer.sdp });
+  try {
+    await ensureCatcherPeer();
+    await state.peer.setRemoteDescription({ type: "offer", sdp });
+    state.remoteDescriptionSet = true;
+    await flushPendingCandidates();
+    const answer = await state.peer.createAnswer();
+    await state.peer.setLocalDescription(answer);
+    send({ type: "webrtc_answer", sdp: answer.sdp });
+    setCatcherDiagnostic("WebRTC answer sent");
+  } catch (error) {
+    setCatcherDiagnostic(`WebRTC offer failed: ${error.message}`);
+  }
 }
 
 async function handleAnswer(sdp) {
   if (!state.peer) return;
-  await state.peer.setRemoteDescription({ type: "answer", sdp });
-  state.remoteDescriptionSet = true;
-  await flushPendingCandidates();
+  try {
+    await state.peer.setRemoteDescription({ type: "answer", sdp });
+    state.remoteDescriptionSet = true;
+    await flushPendingCandidates();
+  } catch (error) {
+    if (state.role === "catcher") setCatcherDiagnostic(`WebRTC answer failed: ${error.message}`);
+  }
 }
 
 async function handleIceCandidate(message) {
@@ -386,7 +437,11 @@ async function handleIceCandidate(message) {
     state.pendingCandidates.push(candidate);
     return;
   }
-  await state.peer.addIceCandidate(candidate);
+  try {
+    await state.peer.addIceCandidate(candidate);
+  } catch (error) {
+    if (state.role === "catcher") setCatcherDiagnostic(`ICE failed: ${error.message}`);
+  }
 }
 
 async function flushPendingCandidates() {
@@ -574,7 +629,11 @@ $("clearSelection").onclick = () => {
   state.context = "";
   syncSelection();
 };
-$("testAudio").onclick = () => playText("DugoutCall connected.");
+$("testAudio").onclick = () => {
+  unlockBrowserAudio();
+  playText("DugoutCall connected.");
+  setCatcherDiagnostic("Browser audio unlocked");
+};
 $("disconnect").onclick = () => {
   state.socket?.close();
   $("catcherState").textContent = "Disconnected";
