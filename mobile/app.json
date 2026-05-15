@@ -15,7 +15,7 @@
     "newArchEnabled": false,
     "ios": {
       "bundleIdentifier": "com.chrisbaso.dugoutcall",
-      "buildNumber": "6",
+      "buildNumber": "7",
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
