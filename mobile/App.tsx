@@ -622,7 +622,7 @@ export default function App() {
             <Pressable
               style={styles.secondaryButton}
               onPress={() => {
-                setCurrentRole("catcher");
+                setCurrentRole(null);
                 setScreen("catcher");
               }}
             >
@@ -665,6 +665,7 @@ export default function App() {
             code={room?.code ?? joinCode}
             catcherState={catcherState}
             joinCode={joinCode}
+            joined={role === "catcher" && Boolean(room)}
             lastHeard={lastHeard}
             lastNetworkEvent={lastNetworkEvent}
             remoteStream={remoteStream}
@@ -799,6 +800,7 @@ function CatcherScreen(props: {
   code: string;
   catcherState: string;
   joinCode: string;
+  joined: boolean;
   lastHeard: string;
   lastNetworkEvent: string;
   remoteStream: MediaStream | null;
@@ -809,11 +811,9 @@ function CatcherScreen(props: {
   testAudio: () => void;
   voiceStatus: string;
 }) {
-  const isJoined = props.role === "catcher" && props.code.length === 6;
-
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      {!isJoined ? (
+      {!props.joined ? (
         <>
           <Text style={styles.screenTitle}>Join as Catcher</Text>
           <Text style={styles.helper}>Connect AirPods to this iPhone before joining.</Text>
