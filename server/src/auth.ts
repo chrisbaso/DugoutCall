@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import { TrackSource } from '@livekit/protocol';
+import { AccessToken, type VideoGrant } from 'livekit-server-sdk';
 import type { UserRole } from './types.js';
 
 export interface RoomTokenClaims {
@@ -9,6 +11,12 @@ export interface RoomTokenClaims {
 
 interface CreateRoomTokenInput extends RoomTokenClaims {
   secret: string;
+}
+
+export interface LiveKitVoiceToken {
+  serverUrl: string;
+  token: string;
+  roomName: string;
 }
 
 const base64Url = (input: string | Buffer) =>
@@ -26,6 +34,44 @@ export function createRoomToken(input: CreateRoomTokenInput): string {
     })
   );
   return `${payload}.${sign(payload, input.secret)}`;
+}
+
+export async function createLiveKitVoiceToken(input: {
+  roomCode: string;
+  role: UserRole;
+  participantId: string;
+  displayName?: string;
+  expiresAt: number;
+}): Promise<LiveKitVoiceToken | null> {
+  const serverUrl = process.env.LIVEKIT_URL;
+  const apiKey = process.env.LIVEKIT_API_KEY;
+  const apiSecret = process.env.LIVEKIT_API_SECRET;
+  if (!serverUrl || !apiKey || !apiSecret) return null;
+
+  const roomName = `dugoutcall-${input.roomCode}`;
+  const identity = `${input.role}-${input.participantId}`;
+  const ttlSeconds = Math.max(60, Math.ceil((input.expiresAt - Date.now()) / 1000));
+  const token = new AccessToken(apiKey, apiSecret, {
+    identity,
+    name: input.displayName ?? input.role,
+    ttl: ttlSeconds
+  });
+  const grant: VideoGrant = {
+    room: roomName,
+    roomJoin: true,
+    canPublish: input.role === 'coach',
+    canPublishSources: input.role === 'coach' ? [TrackSource.MICROPHONE] : [],
+    canSubscribe: input.role === 'catcher',
+    canPublishData: false
+  };
+
+  token.addGrant(grant);
+
+  return {
+    serverUrl,
+    token: await token.toJwt(),
+    roomName
+  };
 }
 
 export function verifyRoomToken(token: string, secret: string, now = Date.now()): RoomTokenClaims {

@@ -1,9 +1,10 @@
+import 'dotenv/config';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import express from 'express';
-import { createRoomToken } from './auth.js';
+import { createLiveKitVoiceToken, createRoomToken } from './auth.js';
 import { buildClientConfig } from './config.js';
 import { RoomDiagnostics } from './diagnostics.js';
 import { RoomStore } from './rooms.js';
@@ -30,31 +31,49 @@ app.get('/config', (_request, response) => {
   response.json(buildClientConfig());
 });
 
-app.post('/rooms', (request, response) => {
-  const room = rooms.createRoom({
-    coachName: request.body?.coachName,
-    teamName: request.body?.teamName,
-    mode: request.body?.mode === 'practice' ? 'practice' : 'game'
-  });
-  diagnostics.record(room.code, {
-    kind: 'room_created',
-    role: 'coach',
-    detail: request.body?.teamName
-  });
-  response.status(201).json({
-    code: room.code,
-    mode: room.mode,
-    expiresAt: room.expiresAt,
-    token: createRoomToken({
-      secret: tokenSecret,
-      roomCode: room.code,
+app.post('/rooms', async (request, response) => {
+  try {
+    const room = rooms.createRoom({
+      coachName: request.body?.coachName,
+      teamName: request.body?.teamName,
+      mode: request.body?.mode === 'practice' ? 'practice' : 'game'
+    });
+    diagnostics.record(room.code, {
+      kind: 'room_created',
       role: 'coach',
-      expiresAt: room.expiresAt
-    })
-  });
+      detail: request.body?.teamName
+    });
+    const coach = room.coach;
+    if (!coach) {
+      response.status(500).json({ error: 'Coach participant was not created' });
+      return;
+    }
+    response.status(201).json({
+      code: room.code,
+      mode: room.mode,
+      expiresAt: room.expiresAt,
+      token: createRoomToken({
+        secret: tokenSecret,
+        roomCode: room.code,
+        role: 'coach',
+        expiresAt: room.expiresAt
+      }),
+      livekit: await createLiveKitVoiceToken({
+        roomCode: room.code,
+        role: 'coach',
+        participantId: coach.id,
+        displayName: coach.displayName,
+        expiresAt: room.expiresAt
+      })
+    });
+  } catch (error) {
+    response.status(500).json({
+      error: error instanceof Error ? error.message : 'Unable to create room'
+    });
+  }
 });
 
-app.post('/rooms/:code/join', (request, response) => {
+app.post('/rooms/:code/join', async (request, response) => {
   try {
     const role = request.body?.role as UserRole;
     const participant = rooms.joinRoom(request.params.code, {
@@ -76,6 +95,13 @@ app.post('/rooms/:code/join', (request, response) => {
         secret: tokenSecret,
         roomCode: room.code,
         role: participant.role,
+        expiresAt: room.expiresAt
+      }),
+      livekit: await createLiveKitVoiceToken({
+        roomCode: room.code,
+        role: participant.role,
+        participantId: participant.id,
+        displayName: participant.displayName,
         expiresAt: room.expiresAt
       })
     });

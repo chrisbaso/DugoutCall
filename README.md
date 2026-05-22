@@ -15,9 +15,9 @@ DugoutCall is no longer scoped as a production web app. The production client is
 The backend is intentionally lightweight:
 
 - Create and expire rooms.
-- Issue per-room coach/catcher tokens.
+- Issue per-room coach/catcher tokens and LiveKit voice tokens.
 - Relay pitch-call JSON messages.
-- Relay WebRTC/LiveKit push-to-talk signaling.
+- Relay push-to-talk state while LiveKit carries live coach voice.
 - Provide health/config endpoints.
 
 The `demo-web/` PWA remains in the repo only as a development harness for backend, room, and signaling experiments. It is not the product experience and should not drive UI or field-use decisions.
@@ -84,6 +84,7 @@ Production notes:
 
 - Run behind TLS and expose WebSockets as `wss://`.
 - Set `DUGOUTCALL_TOKEN_SECRET` to a strong secret.
+- Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` to enable LiveKit voice rooms.
 - Do not commit production secrets.
 - Keep room TTL short with `ROOM_TTL_MS`.
 
@@ -110,7 +111,7 @@ eas submit --platform ios --profile production
 
 The Expo app uses bundle identifier `com.chrisbaso.dugoutcall` and defaults to the hosted backend at `https://dugoutcall.onrender.com`.
 
-Current Expo MVP supports room creation/joining, pitch button relay, catcher listen-only mode, text-to-speech playback, and one-way WebRTC push-to-talk in EAS/TestFlight builds.
+Current Expo MVP supports room creation/joining, pitch button relay, catcher listen-only mode, text-to-speech playback, and one-way LiveKit push-to-talk in EAS/TestFlight builds.
 
 ### SwiftUI Reference Path
 

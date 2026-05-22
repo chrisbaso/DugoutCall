@@ -27,7 +27,7 @@ public final class AudioSessionService: ObservableObject {
     }
 
     public func configureForCoachPushToTalk() throws {
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .allowBluetoothA2DP, .duckOthers])
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
         try session.setActive(true)
         refreshRouteState()
     }

@@ -1,5 +1,7 @@
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from "expo-av";
 import * as Speech from "expo-speech";
+import { AudioSession as LiveKitAudioSession } from "@livekit/react-native";
+import { ConnectionState as LiveKitConnectionState, Room, RoomEvent, Track } from "livekit-client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -22,17 +24,35 @@ import {
   RTCPeerConnection,
   RTCSessionDescription,
   RTCView
-} from "react-native-webrtc";
+} from "@livekit/react-native-webrtc";
 
 type Role = "coach" | "catcher";
 type AppMode = "game" | "practice";
 type ConnectionState = "idle" | "connecting" | "connected" | "disconnected";
+
+type VoiceDiagnostics = {
+  micActive: boolean;
+  publishingAudio: boolean;
+  subscribedToRemoteAudio: boolean;
+  playbackAttached: boolean;
+  outputRoute: string;
+  localAudioTracks: number;
+  remoteAudioTracks: number;
+  peerState: string;
+};
 
 type RoomResponse = {
   code: string;
   mode: AppMode;
   expiresAt: number;
   token: string;
+  livekit?: LiveKitVoiceCredentials | null;
+};
+
+type LiveKitVoiceCredentials = {
+  serverUrl: string;
+  token: string;
+  roomName: string;
 };
 
 type PitchCallMessage = {
@@ -111,6 +131,16 @@ const websocketUrl = (baseUrl: string) => {
 };
 
 const callId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const initialVoiceDiagnostics: VoiceDiagnostics = {
+  micActive: false,
+  publishingAudio: false,
+  subscribedToRemoteAudio: false,
+  playbackAttached: false,
+  outputRoute: "Unknown",
+  localAudioTracks: 0,
+  remoteAudioTracks: 0,
+  peerState: "idle"
+};
 
 const phrase = (pitch: string, location?: string) => {
   if (!location || pitch === "Pitchout" || pitch === "Pickoff") return pitch;
@@ -134,11 +164,13 @@ const activateWebRTCAudio = () => {
 
 export default function App() {
   const socketRef = useRef<WebSocket | null>(null);
+  const liveKitRoomRef = useRef<Room | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const localAudioAddedRef = useRef(false);
   const pendingIceCandidatesRef = useRef<ICECandidateMessage[]>([]);
   const creatingOfferRef = useRef(false);
+  const playedRemoteSubscriptionToneRef = useRef(false);
   const lastSpeechAtRef = useRef(0);
   const roleRef = useRef<Role | null>(null);
   const roomCodeRef = useRef("");
@@ -156,6 +188,10 @@ export default function App() {
   const [isTalking, setIsTalking] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("Voice ready");
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [remoteStreamUrl, setRemoteStreamUrl] = useState("");
+  const [forceSpeaker, setForceSpeaker] = useState(false);
+  const [voiceDiagnostics, setVoiceDiagnostics] = useState<VoiceDiagnostics>(initialVoiceDiagnostics);
+  const [liveKitRoomName, setLiveKitRoomName] = useState("");
   const [catcherState, setCatcherState] = useState("Waiting for call");
   const [lastHeard, setLastHeard] = useState("No pitch call yet.");
   const [lastNetworkEvent, setLastNetworkEvent] = useState("No room joined");
@@ -171,7 +207,18 @@ export default function App() {
 
   const apiUrl = (path: string) => `${normalizeBaseUrl(backendUrl)}${path}`;
 
-  const configureAudioForPlayback = async () => {
+  const updateVoiceDiagnostics = (patch: Partial<VoiceDiagnostics>) => {
+    setVoiceDiagnostics((current) => ({ ...current, ...patch }));
+  };
+
+  const configuredOutputRoute = (label: string, speakerRequested = forceSpeaker) => {
+    if (Platform.OS === "ios") {
+      return speakerRequested ? `${label}: speaker requested` : `${label}: system route`;
+    }
+    return speakerRequested ? `${label}: speaker requested` : `${label}: speaker/default`;
+  };
+
+  const configureAudioForPlayback = async (label = "playback") => {
     await Audio.setAudioModeAsync({
       allowsRecordingIOS: false,
       interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
@@ -181,6 +228,7 @@ export default function App() {
       shouldDuckAndroid: false,
       staysActiveInBackground: false
     });
+    updateVoiceDiagnostics({ outputRoute: configuredOutputRoute(label) });
     setVoiceStatus("Audio playback ready");
   };
 
@@ -193,6 +241,54 @@ export default function App() {
       playsInSilentModeIOS: true,
       shouldDuckAndroid: false,
       staysActiveInBackground: false
+    });
+    updateVoiceDiagnostics({ outputRoute: configuredOutputRoute("voice transmit") });
+  };
+
+  const configureAudioForVoiceReceive = async (label = "voice receive", speakerRequested = forceSpeaker) => {
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: !speakerRequested,
+      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+      playThroughEarpieceAndroid: false,
+      playsInSilentModeIOS: true,
+      shouldDuckAndroid: false,
+      staysActiveInBackground: false
+    });
+    updateVoiceDiagnostics({ outputRoute: configuredOutputRoute(label, speakerRequested) });
+  };
+
+  const configureLiveKitAudio = async (roleForAudio: Role, speakerRequested = forceSpeaker) => {
+    await LiveKitAudioSession.configureAudio({
+      ios: {
+        defaultOutput: speakerRequested || roleForAudio === "catcher" ? "speaker" : "earpiece"
+      },
+      android: {
+        preferredOutputList: ["bluetooth", "headset", "speaker", "earpiece"],
+        audioTypeOptions: {
+          audioMode: "inCommunication",
+          audioAttributesUsageType: "voiceCommunication",
+          audioAttributesContentType: "speech",
+          audioStreamType: "voiceCall",
+          manageAudioFocus: true
+        }
+      }
+    });
+    await LiveKitAudioSession.startAudioSession();
+    await LiveKitAudioSession.setAppleAudioConfiguration({
+      audioCategory: "playAndRecord",
+      audioMode: "voiceChat",
+      audioCategoryOptions: ["defaultToSpeaker", "allowBluetooth"]
+    });
+    if (speakerRequested) {
+      await LiveKitAudioSession.selectAudioOutput("force_speaker");
+    }
+    updateVoiceDiagnostics({
+      outputRoute: speakerRequested
+        ? "LiveKit: force speaker"
+        : roleForAudio === "catcher"
+          ? "LiveKit: speaker default"
+          : "LiveKit: system route"
     });
   };
 
@@ -234,11 +330,24 @@ export default function App() {
     throw new Error(lastError);
   };
 
+  const closeLiveKitVoiceSession = () => {
+    const room = liveKitRoomRef.current;
+    liveKitRoomRef.current = null;
+    setLiveKitRoomName("");
+    if (room) {
+      void room.localParticipant.setMicrophoneEnabled(false).catch(() => undefined);
+      void room.disconnect(true).catch(() => undefined);
+    }
+    void LiveKitAudioSession.stopAudioSession().catch(() => undefined);
+  };
+
   const closeVoiceSession = () => {
+    closeLiveKitVoiceSession();
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
     localAudioAddedRef.current = false;
     pendingIceCandidatesRef.current = [];
+    playedRemoteSubscriptionToneRef.current = false;
     peerRef.current?.close();
     peerRef.current = null;
     try {
@@ -247,6 +356,8 @@ export default function App() {
       // Audio session cleanup is best-effort.
     }
     setRemoteStream(null);
+    setRemoteStreamUrl("");
+    setVoiceDiagnostics(initialVoiceDiagnostics);
     setIsTalking(false);
     void configureAudioForPlayback();
   };
@@ -358,12 +469,109 @@ export default function App() {
     return true;
   };
 
+  const connectLiveKitVoice = async (credentials: LiveKitVoiceCredentials | null | undefined, nextRole: Role) => {
+    closeLiveKitVoiceSession();
+    playedRemoteSubscriptionToneRef.current = false;
+
+    if (!credentials) {
+      setVoiceStatus("LiveKit not configured");
+      updateVoiceDiagnostics({ peerState: "livekit missing" });
+      return;
+    }
+
+    try {
+      setVoiceStatus("Connecting LiveKit voice...");
+      setLiveKitRoomName(credentials.roomName);
+      await configureLiveKitAudio(nextRole);
+
+      const liveKitRoom = new Room({
+        adaptiveStream: false,
+        dynacast: false
+      });
+      liveKitRoomRef.current = liveKitRoom;
+
+      liveKitRoom
+        .on(RoomEvent.Connected, () => {
+          setVoiceStatus(nextRole === "coach" ? "LiveKit voice ready" : "Listening for coach voice");
+          updateVoiceDiagnostics({ peerState: "livekit connected" });
+          if (nextRole === "catcher") {
+            void liveKitRoom.startAudio().catch(() => setVoiceStatus("Tap Play test audio to unlock sound"));
+          }
+        })
+        .on(RoomEvent.ConnectionStateChanged, (state) => {
+          updateVoiceDiagnostics({ peerState: `livekit ${state}` });
+          if (state === LiveKitConnectionState.Reconnecting || state === LiveKitConnectionState.SignalReconnecting) {
+            setVoiceStatus("LiveKit reconnecting...");
+          }
+        })
+        .on(RoomEvent.LocalTrackPublished, (publication) => {
+          if (publication.source !== Track.Source.Microphone) return;
+          updateVoiceDiagnostics({
+            localAudioTracks: 1,
+            micActive: !publication.isMuted,
+            publishingAudio: !publication.isMuted
+          });
+        })
+        .on(RoomEvent.LocalTrackUnpublished, () => {
+          updateVoiceDiagnostics({ localAudioTracks: 0, micActive: false, publishingAudio: false });
+        })
+        .on(RoomEvent.TrackSubscribed, (track) => {
+          if (track.kind !== Track.Kind.Audio) return;
+          updateVoiceDiagnostics({
+            subscribedToRemoteAudio: true,
+            playbackAttached: true,
+            remoteAudioTracks: 1
+          });
+          setCatcherState("Receiving voice");
+          setVoiceStatus("LiveKit voice connected");
+          if (!playedRemoteSubscriptionToneRef.current) {
+            playedRemoteSubscriptionToneRef.current = true;
+            void playTone().catch(() => setVoiceStatus("Subscribed; tone failed"));
+          }
+        })
+        .on(RoomEvent.TrackUnsubscribed, (track) => {
+          if (track.kind !== Track.Kind.Audio) return;
+          updateVoiceDiagnostics({
+            subscribedToRemoteAudio: false,
+            playbackAttached: false,
+            remoteAudioTracks: 0
+          });
+          setVoiceStatus("Coach voice unsubscribed");
+        })
+        .on(RoomEvent.AudioPlaybackStatusChanged, (playing) => {
+          updateVoiceDiagnostics({ playbackAttached: playing });
+        })
+        .on(RoomEvent.Disconnected, () => {
+          updateVoiceDiagnostics({
+            micActive: false,
+            publishingAudio: false,
+            subscribedToRemoteAudio: false,
+            playbackAttached: false,
+            peerState: "livekit disconnected"
+          });
+        });
+
+      await liveKitRoom.connect(credentials.serverUrl, credentials.token, {
+        autoSubscribe: nextRole === "catcher"
+      });
+      if (nextRole === "coach") {
+        await liveKitRoom.localParticipant.setMicrophoneEnabled(false);
+      }
+    } catch (error) {
+      closeLiveKitVoiceSession();
+      setVoiceStatus("LiveKit voice failed");
+      setStatus(error instanceof Error ? error.message : "LiveKit voice failed");
+      updateVoiceDiagnostics({ peerState: "livekit failed" });
+    }
+  };
+
   const createPeerConnection = () => {
     if (peerRef.current) return peerRef.current;
 
     activateWebRTCAudio();
     const peer = new RTCPeerConnection(rtcConfiguration);
     peerRef.current = peer;
+    updateVoiceDiagnostics({ peerState: "created" });
 
     (peer as any).addEventListener("icecandidate", (event: any) => {
       const candidate = event.candidate;
@@ -379,16 +587,29 @@ export default function App() {
     (peer as any).addEventListener("track", (event: any) => {
       const [stream] = event.streams;
       if (stream) {
-        (stream.getAudioTracks() as any[]).forEach((track) => {
+        const audioTracks = stream.getAudioTracks() as any[];
+        audioTracks.forEach((track) => {
+          track.enabled = true;
           (track as any)._setVolume?.(10);
         });
         setRemoteStream(stream);
+        setRemoteStreamUrl(stream.toURL());
+        updateVoiceDiagnostics({
+          subscribedToRemoteAudio: audioTracks.length > 0,
+          playbackAttached: true,
+          remoteAudioTracks: audioTracks.length
+        });
         setCatcherState("Receiving voice");
         setVoiceStatus("Voice connected");
+        if (!playedRemoteSubscriptionToneRef.current) {
+          playedRemoteSubscriptionToneRef.current = true;
+          void playTone().catch(() => setVoiceStatus("Remote subscribed; tone failed"));
+        }
       }
     });
 
     (peer as any).addEventListener("connectionstatechange", () => {
+      updateVoiceDiagnostics({ peerState: peer.connectionState });
       if (peer.connectionState === "connected") setVoiceStatus("Voice connected");
       if (peer.connectionState === "connecting") setVoiceStatus("Connecting voice...");
       if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
@@ -419,7 +640,7 @@ export default function App() {
     if (roleRef.current !== "catcher") return;
 
     try {
-      await configureAudioForPlayback();
+      await configureAudioForVoiceReceive("voice receive");
       activateWebRTCAudio();
       const peer = createPeerConnection();
       await peer.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: message.sdp }));
@@ -427,6 +648,7 @@ export default function App() {
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
       sendSocket({ type: "webrtc_answer", sdp: answer.sdp });
+      updateVoiceDiagnostics({ peerState: peer.connectionState });
       setVoiceStatus("Voice ready");
     } catch (error) {
       setVoiceStatus("Voice setup failed");
@@ -490,6 +712,12 @@ export default function App() {
       if (!localAudioAddedRef.current) peer.addTrack(track, stream);
     });
     localAudioAddedRef.current = true;
+    updateVoiceDiagnostics({
+      localAudioTracks: stream.getAudioTracks().length,
+      micActive: stream.getAudioTracks().some((track) => track.enabled),
+      publishingAudio: stream.getAudioTracks().some((track) => track.enabled),
+      peerState: peer.connectionState
+    });
 
     if (!peer.localDescription && !creatingOfferRef.current) {
       creatingOfferRef.current = true;
@@ -518,6 +746,7 @@ export default function App() {
       setCurrentRole("coach");
       setScreen("coach");
       connectSocket("coach", response.code, "Coach");
+      await connectLiveKitVoice(response.livekit, "coach");
     } catch (error) {
       Alert.alert("Could not create room", error instanceof Error ? error.message : "Try again.");
       setStatus("Create room failed");
@@ -543,6 +772,7 @@ export default function App() {
       setScreen("catcher");
       setCatcherState("Connected");
       connectSocket("catcher", code, "Catcher");
+      await connectLiveKitVoice(response.livekit, "catcher");
       speak("DugoutCall connected.");
     } catch (error) {
       Alert.alert("Could not join room", error instanceof Error ? error.message : "Try again.");
@@ -632,14 +862,28 @@ export default function App() {
     }
 
     try {
-      setVoiceStatus("Starting microphone...");
-      await prepareCoachAudio();
-      localStreamRef.current?.getAudioTracks().forEach((track) => {
-        track.enabled = true;
-      });
+      const liveKitRoom = liveKitRoomRef.current;
+      if (!liveKitRoom || liveKitRoom.state !== LiveKitConnectionState.Connected) {
+        setVoiceStatus("LiveKit voice not connected");
+        setStatus("LiveKit voice not connected");
+        return;
+      }
+
+      setVoiceStatus("Starting LiveKit microphone...");
+      await configureLiveKitAudio("coach");
+      await liveKitRoom.localParticipant.setMicrophoneEnabled(true, {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      } as any);
       setIsTalking(true);
       setStatus("Live voice on");
-      setVoiceStatus("Transmitting");
+      setVoiceStatus("LiveKit transmitting");
+      updateVoiceDiagnostics({
+        micActive: true,
+        publishingAudio: true,
+        localAudioTracks: 1
+      });
       sendSocket({ type: "ptt_start", timestamp: Date.now() });
     } catch (error) {
       setIsTalking(false);
@@ -653,14 +897,28 @@ export default function App() {
 
   const stopTalk = () => {
     if (!isTalking) return;
-    localStreamRef.current?.getAudioTracks().forEach((track) => {
-      track.enabled = false;
-    });
-    void configureAudioForPlayback();
+    void liveKitRoomRef.current?.localParticipant.setMicrophoneEnabled(false);
     setIsTalking(false);
     setStatus("Live voice off");
-    setVoiceStatus("Voice ready");
+    setVoiceStatus("LiveKit voice ready");
+    updateVoiceDiagnostics({ micActive: false, publishingAudio: false });
     sendSocket({ type: "ptt_stop", timestamp: Date.now() });
+  };
+
+  const toggleForceSpeaker = () => {
+    const nextValue = !forceSpeaker;
+    setForceSpeaker(nextValue);
+    setVoiceDiagnostics((current) => ({
+      ...current,
+      outputRoute: nextValue ? "LiveKit: force speaker" : "LiveKit: system route"
+    }));
+    if (liveKitRoomRef.current) {
+      void configureLiveKitAudio(roleRef.current ?? "catcher", nextValue)
+        .then(() => LiveKitAudioSession.selectAudioOutput(nextValue ? "force_speaker" : "default"))
+        .catch(() => setVoiceStatus("Speaker route change failed"));
+    } else if (roleRef.current === "catcher") {
+      void configureAudioForVoiceReceive("voice receive", nextValue);
+    }
   };
 
   const reset = () => {
@@ -732,6 +990,7 @@ export default function App() {
             isTalking={isTalking}
             lastStatus={status}
             voiceStatus={voiceStatus}
+            voiceDiagnostics={voiceDiagnostics}
             onClear={() => {
               setSelectedPitch("");
               setSelectedLocation("");
@@ -762,12 +1021,16 @@ export default function App() {
             lastHeard={lastHeard}
             lastNetworkEvent={lastNetworkEvent}
             remoteStream={remoteStream}
+            remoteStreamUrl={remoteStreamUrl}
             role={role}
             setJoinCode={setJoinCode}
             joinRoom={joinRoom}
             reset={reset}
             testAudio={playTestAudio}
+            forceSpeaker={forceSpeaker}
+            toggleForceSpeaker={toggleForceSpeaker}
             voiceStatus={voiceStatus}
+            voiceDiagnostics={voiceDiagnostics}
           />
         )}
       </KeyboardAvoidingView>
@@ -795,6 +1058,7 @@ function CoachScreen(props: {
   setSelectedPitch: (value: string) => void;
   sendPreset: (pitch: string, location?: string) => void;
   voiceStatus: string;
+  voiceDiagnostics: VoiceDiagnostics;
 }) {
   return (
     <View style={styles.flex}>
@@ -809,6 +1073,7 @@ function CoachScreen(props: {
         <Text style={styles.statusLine}>{props.lastStatus}</Text>
         <Text style={styles.statusLine}>{props.lastNetworkEvent}</Text>
         <Text style={styles.voiceLine}>{props.voiceStatus}</Text>
+        <VoiceDiagnosticsPanel diagnostics={props.voiceDiagnostics} />
 
         <Section title="Presets">
           <View style={styles.gridFour}>
@@ -897,12 +1162,16 @@ function CatcherScreen(props: {
   lastHeard: string;
   lastNetworkEvent: string;
   remoteStream: MediaStream | null;
+  remoteStreamUrl: string;
   role: Role | null;
   setJoinCode: (value: string) => void;
   joinRoom: () => void;
   reset: () => void;
   testAudio: () => void;
+  forceSpeaker: boolean;
+  toggleForceSpeaker: () => void;
   voiceStatus: string;
+  voiceDiagnostics: VoiceDiagnostics;
 }) {
   return (
     <ScrollView contentContainerStyle={styles.content}>
@@ -935,7 +1204,18 @@ function CatcherScreen(props: {
           <Text style={styles.airPods}>AirPods connected if selected in iOS audio route</Text>
           <Text style={styles.voiceLine}>{props.voiceStatus}</Text>
           <Text style={styles.statusLine}>{props.lastNetworkEvent}</Text>
-          {props.remoteStream && <RTCView streamURL={props.remoteStream.toURL()} style={styles.hiddenRtcView} />}
+          {props.remoteStream && props.remoteStreamUrl ? (
+            <RTCView streamURL={props.remoteStreamUrl} style={styles.hiddenRtcView} />
+          ) : null}
+          <VoiceDiagnosticsPanel diagnostics={props.voiceDiagnostics} />
+          <Pressable
+            style={[styles.toggleButton, props.forceSpeaker && styles.toggleButtonActive]}
+            onPress={props.toggleForceSpeaker}
+          >
+            <Text style={[styles.toggleButtonText, props.forceSpeaker && styles.toggleButtonTextActive]}>
+              {props.forceSpeaker ? "Force Speaker On" : "Force Speaker Off"}
+            </Text>
+          </Pressable>
           <Text style={styles.lastHeard}>{props.lastHeard}</Text>
           <Pressable style={styles.secondaryButton} onPress={props.testAudio}>
             <Text style={styles.secondaryButtonText}>Play test audio</Text>
@@ -946,6 +1226,29 @@ function CatcherScreen(props: {
         </>
       )}
     </ScrollView>
+  );
+}
+
+function VoiceDiagnosticsPanel({ diagnostics }: { diagnostics: VoiceDiagnostics }) {
+  const rows = [
+    ["Mic active", diagnostics.micActive ? "Yes" : "No"],
+    ["Publishing audio", diagnostics.publishingAudio ? "Yes" : "No"],
+    ["Subscribed remote", diagnostics.subscribedToRemoteAudio ? "Yes" : "No"],
+    ["Playback attached", diagnostics.playbackAttached ? "Yes" : "No"],
+    ["Output route", diagnostics.outputRoute],
+    ["Tracks", `local ${diagnostics.localAudioTracks} / remote ${diagnostics.remoteAudioTracks}`],
+    ["Peer", diagnostics.peerState]
+  ];
+
+  return (
+    <View style={styles.diagnosticsPanel}>
+      {rows.map(([label, value]) => (
+        <View style={styles.diagnosticsRow} key={label}>
+          <Text style={styles.diagnosticsLabel}>{label}</Text>
+          <Text style={styles.diagnosticsValue}>{value}</Text>
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -1083,6 +1386,33 @@ const styles = StyleSheet.create({
     color: "#ffd9d9",
     fontSize: 16,
     fontWeight: "900"
+  },
+  diagnosticsLabel: {
+    color: "#a8b8a5",
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "800"
+  },
+  diagnosticsPanel: {
+    backgroundColor: "#101912",
+    borderColor: "#314133",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 6,
+    padding: 10
+  },
+  diagnosticsRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    justifyContent: "space-between"
+  },
+  diagnosticsValue: {
+    color: "#f6f1dc",
+    flex: 1.2,
+    fontSize: 12,
+    fontWeight: "900",
+    textAlign: "right"
   },
   flex: {
     flex: 1
@@ -1308,6 +1638,27 @@ const styles = StyleSheet.create({
     color: "#f6f1dc",
     fontSize: 26,
     fontWeight: "900"
+  },
+  toggleButton: {
+    alignItems: "center",
+    backgroundColor: "#213026",
+    borderColor: "#3b4f3f",
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 52,
+    justifyContent: "center"
+  },
+  toggleButtonActive: {
+    backgroundColor: "#f3b23f",
+    borderColor: "#ffd27a"
+  },
+  toggleButtonText: {
+    color: "#f6f1dc",
+    fontSize: 16,
+    fontWeight: "900"
+  },
+  toggleButtonTextActive: {
+    color: "#141108"
   },
   voiceLine: {
     color: "#f3b23f",

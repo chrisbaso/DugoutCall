@@ -15,7 +15,7 @@
     "newArchEnabled": false,
     "ios": {
       "bundleIdentifier": "com.chrisbaso.dugoutcall",
-      "buildNumber": "9",
+      "buildNumber": "10",
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -30,6 +30,7 @@
     },
     "owner": "chrisbaso",
     "plugins": [
+      "@livekit/react-native-expo-plugin",
       "@config-plugins/react-native-webrtc"
     ]
   }

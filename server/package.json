@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^4.19.2",
+    "livekit-server-sdk": "^2.15.3",
     "ws": "^8.17.1"
   },
   "devDependencies": {
