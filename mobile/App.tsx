@@ -29,6 +29,7 @@ import {
 type Role = "coach" | "catcher";
 type AppMode = "game" | "practice";
 type ConnectionState = "idle" | "connecting" | "connected" | "disconnected";
+type DiagnosticStatus = "idle" | "running" | "pass" | "warn" | "fail";
 
 type VoiceDiagnostics = {
   micActive: boolean;
@@ -39,6 +40,25 @@ type VoiceDiagnostics = {
   localAudioTracks: number;
   remoteAudioTracks: number;
   peerState: string;
+};
+
+type DiagnosticCheck = {
+  key: string;
+  label: string;
+  status: DiagnosticStatus;
+  detail: string;
+};
+
+type RoomDiagnosticSnapshot = {
+  code: string;
+  counters: Record<string, number>;
+  recentEvents: {
+    detail?: string;
+    kind: string;
+    recipientCount?: number;
+    role?: Role;
+    timestamp: number;
+  }[];
 };
 
 type RoomResponse = {
@@ -141,6 +161,15 @@ const initialVoiceDiagnostics: VoiceDiagnostics = {
   remoteAudioTracks: 0,
   peerState: "idle"
 };
+const initialDiagnosticChecks: DiagnosticCheck[] = [
+  { key: "backend", label: "Backend health", status: "idle", detail: "Not checked" },
+  { key: "socket", label: "WebSocket room", status: "idle", detail: "Not joined" },
+  { key: "room", label: "Room relay", status: "idle", detail: "No room" },
+  { key: "localAudio", label: "Local audio", status: "idle", detail: "Not checked" },
+  { key: "speech", label: "Speech playback", status: "idle", detail: "Not checked" },
+  { key: "microphone", label: "Microphone", status: "idle", detail: "Coach only" },
+  { key: "voice", label: "Live voice", status: "idle", detail: "Not connected" }
+];
 
 const phrase = (pitch: string, location?: string) => {
   if (!location || pitch === "Pitchout" || pitch === "Pickoff") return pitch;
@@ -195,6 +224,9 @@ export default function App() {
   const [catcherState, setCatcherState] = useState("Waiting for call");
   const [lastHeard, setLastHeard] = useState("No pitch call yet.");
   const [lastNetworkEvent, setLastNetworkEvent] = useState("No room joined");
+  const [diagnosticChecks, setDiagnosticChecks] = useState<DiagnosticCheck[]>(initialDiagnosticChecks);
+  const [isRunningDiagnostics, setIsRunningDiagnostics] = useState(false);
+  const [lastServerDiagnostics, setLastServerDiagnostics] = useState("No server diagnostics fetched");
 
   useEffect(() => {
     void configureAudioForPlayback();
@@ -328,6 +360,166 @@ export default function App() {
       }
     }
     throw new Error(lastError);
+  };
+
+  const setDiagnosticCheck = (check: DiagnosticCheck) => {
+    setDiagnosticChecks((current) => current.map((item) => (item.key === check.key ? check : item)));
+  };
+
+  const roomDiagnosticSummary = (snapshot: RoomDiagnosticSnapshot) => {
+    const socketJoins = snapshot.counters.socket_joined ?? 0;
+    const pitchCalls = snapshot.counters.pitch_call ?? 0;
+    const pttStarts = snapshot.counters.ptt_start ?? 0;
+    const lastEvent = snapshot.recentEvents[snapshot.recentEvents.length - 1];
+    const eventText = lastEvent ? `${lastEvent.kind} ${new Date(lastEvent.timestamp).toLocaleTimeString()}` : "no events";
+    return `${socketJoins} socket joins, ${pitchCalls} pitch calls, ${pttStarts} PTT starts, last ${eventText}`;
+  };
+
+  const runDiagnostics = async () => {
+    if (isRunningDiagnostics) return;
+    setIsRunningDiagnostics(true);
+    setDiagnosticChecks(initialDiagnosticChecks.map((check) => ({ ...check, status: "running", detail: "Checking..." })));
+
+    try {
+      try {
+        const response = await fetch(apiUrl("/health"));
+        const body = (await response.json()) as { ok?: boolean; service?: string };
+        setDiagnosticCheck({
+          key: "backend",
+          label: "Backend health",
+          status: response.ok && body.ok ? "pass" : "fail",
+          detail: response.ok ? body.service ?? "Healthy" : `HTTP ${response.status}`
+        });
+      } catch (error) {
+        setDiagnosticCheck({
+          key: "backend",
+          label: "Backend health",
+          status: "fail",
+          detail: error instanceof Error ? error.message : "Backend unreachable"
+        });
+      }
+
+      const socketOpen = socketRef.current?.readyState === WebSocket.OPEN;
+      setDiagnosticCheck({
+        key: "socket",
+        label: "WebSocket room",
+        status: socketOpen ? "pass" : room ? "fail" : "warn",
+        detail: socketOpen ? `${roleRef.current ?? "unknown"} socket open` : room ? "Room joined but socket closed" : "Join/create a room first"
+      });
+
+      const code = roomCodeRef.current || room?.code || joinCode.trim();
+      if (code.length === 6) {
+        try {
+          const snapshot = await requestJson<RoomDiagnosticSnapshot>(`/rooms/${code}/diagnostics`, { method: "GET" });
+          const summary = roomDiagnosticSummary(snapshot);
+          const hasCoach = snapshot.recentEvents.some((event) => event.kind === "socket_joined" && event.role === "coach");
+          const hasCatcher = snapshot.recentEvents.some((event) => event.kind === "socket_joined" && event.role === "catcher");
+          setLastServerDiagnostics(summary);
+          setDiagnosticCheck({
+            key: "room",
+            label: "Room relay",
+            status: hasCoach && hasCatcher ? "pass" : "warn",
+            detail: `${hasCoach ? "coach socket" : "no coach socket"}, ${hasCatcher ? "catcher socket" : "no catcher socket"}; ${summary}`
+          });
+        } catch (error) {
+          setDiagnosticCheck({
+            key: "room",
+            label: "Room relay",
+            status: "fail",
+            detail: error instanceof Error ? error.message : "Room diagnostics unavailable"
+          });
+        }
+      } else {
+        setDiagnosticCheck({
+          key: "room",
+          label: "Room relay",
+          status: "warn",
+          detail: "Create or enter a 6-digit room code"
+        });
+      }
+
+      try {
+        await playTone();
+        setDiagnosticCheck({
+          key: "localAudio",
+          label: "Local audio",
+          status: "pass",
+          detail: "Tone started on this iPhone"
+        });
+      } catch (error) {
+        setDiagnosticCheck({
+          key: "localAudio",
+          label: "Local audio",
+          status: "fail",
+          detail: error instanceof Error ? error.message : "Tone failed"
+        });
+      }
+
+      try {
+        Speech.stop();
+        Speech.speak("DugoutCall audio test.", {
+          pitch: 1,
+          rate: 0.48,
+          volume: 1
+        });
+        setDiagnosticCheck({
+          key: "speech",
+          label: "Speech playback",
+          status: "pass",
+          detail: "Speech test started"
+        });
+      } catch (error) {
+        setDiagnosticCheck({
+          key: "speech",
+          label: "Speech playback",
+          status: "fail",
+          detail: error instanceof Error ? error.message : "Speech failed"
+        });
+      }
+
+      if (roleRef.current === "coach") {
+        try {
+          const permission = await Audio.requestPermissionsAsync();
+          setDiagnosticCheck({
+            key: "microphone",
+            label: "Microphone",
+            status: permission.granted ? "pass" : "fail",
+            detail: permission.granted ? "Permission granted" : `Permission ${permission.status}`
+          });
+        } catch (error) {
+          setDiagnosticCheck({
+            key: "microphone",
+            label: "Microphone",
+            status: "fail",
+            detail: error instanceof Error ? error.message : "Permission check failed"
+          });
+        }
+      } else {
+        setDiagnosticCheck({
+          key: "microphone",
+          label: "Microphone",
+          status: roleRef.current === "catcher" ? "pass" : "warn",
+          detail: roleRef.current === "catcher" ? "Not used in Game Mode" : "Coach permission checked after room create"
+        });
+      }
+
+      const liveKitRoom = liveKitRoomRef.current;
+      const liveKitConnected = liveKitRoom?.state === LiveKitConnectionState.Connected;
+      const voiceReady =
+        roleRef.current === "coach"
+          ? liveKitConnected
+          : liveKitConnected && (voiceDiagnostics.subscribedToRemoteAudio || voiceDiagnostics.peerState.includes("livekit"));
+      setDiagnosticCheck({
+        key: "voice",
+        label: "Live voice",
+        status: voiceReady ? "pass" : liveKitConnected ? "warn" : "fail",
+        detail: liveKitConnected
+          ? `${liveKitRoomName || "LiveKit room"} connected; ${voiceDiagnostics.localAudioTracks} local / ${voiceDiagnostics.remoteAudioTracks} remote tracks`
+          : voiceDiagnostics.peerState || "LiveKit not connected"
+      });
+    } finally {
+      setIsRunningDiagnostics(false);
+    }
   };
 
   const closeLiveKitVoiceSession = () => {
@@ -932,6 +1124,8 @@ export default function App() {
     setCatcherState("Waiting for call");
     setLastHeard("No pitch call yet.");
     setLastNetworkEvent("No room joined");
+    setDiagnosticChecks(initialDiagnosticChecks);
+    setLastServerDiagnostics("No server diagnostics fetched");
   };
 
   return (
@@ -966,6 +1160,13 @@ export default function App() {
               value={backendUrl}
             />
 
+            <TestModePanel
+              checks={diagnosticChecks}
+              isRunning={isRunningDiagnostics}
+              lastServerDiagnostics={lastServerDiagnostics}
+              onRun={runDiagnostics}
+            />
+
             <Pressable style={styles.primaryButton} onPress={createRoom}>
               <Text style={styles.primaryButtonText}>Coach Mode</Text>
               <Text style={styles.buttonSubtext}>Create room</Text>
@@ -991,6 +1192,10 @@ export default function App() {
             lastStatus={status}
             voiceStatus={voiceStatus}
             voiceDiagnostics={voiceDiagnostics}
+            diagnosticChecks={diagnosticChecks}
+            isRunningDiagnostics={isRunningDiagnostics}
+            lastServerDiagnostics={lastServerDiagnostics}
+            onRunDiagnostics={runDiagnostics}
             onClear={() => {
               setSelectedPitch("");
               setSelectedLocation("");
@@ -1031,6 +1236,10 @@ export default function App() {
             toggleForceSpeaker={toggleForceSpeaker}
             voiceStatus={voiceStatus}
             voiceDiagnostics={voiceDiagnostics}
+            diagnosticChecks={diagnosticChecks}
+            isRunningDiagnostics={isRunningDiagnostics}
+            lastServerDiagnostics={lastServerDiagnostics}
+            onRunDiagnostics={runDiagnostics}
           />
         )}
       </KeyboardAvoidingView>
@@ -1059,6 +1268,10 @@ function CoachScreen(props: {
   sendPreset: (pitch: string, location?: string) => void;
   voiceStatus: string;
   voiceDiagnostics: VoiceDiagnostics;
+  diagnosticChecks: DiagnosticCheck[];
+  isRunningDiagnostics: boolean;
+  lastServerDiagnostics: string;
+  onRunDiagnostics: () => void;
 }) {
   return (
     <View style={styles.flex}>
@@ -1074,6 +1287,12 @@ function CoachScreen(props: {
         <Text style={styles.statusLine}>{props.lastNetworkEvent}</Text>
         <Text style={styles.voiceLine}>{props.voiceStatus}</Text>
         <VoiceDiagnosticsPanel diagnostics={props.voiceDiagnostics} />
+        <TestModePanel
+          checks={props.diagnosticChecks}
+          isRunning={props.isRunningDiagnostics}
+          lastServerDiagnostics={props.lastServerDiagnostics}
+          onRun={props.onRunDiagnostics}
+        />
 
         <Section title="Presets">
           <View style={styles.gridFour}>
@@ -1172,6 +1391,10 @@ function CatcherScreen(props: {
   toggleForceSpeaker: () => void;
   voiceStatus: string;
   voiceDiagnostics: VoiceDiagnostics;
+  diagnosticChecks: DiagnosticCheck[];
+  isRunningDiagnostics: boolean;
+  lastServerDiagnostics: string;
+  onRunDiagnostics: () => void;
 }) {
   return (
     <ScrollView contentContainerStyle={styles.content}>
@@ -1208,6 +1431,12 @@ function CatcherScreen(props: {
             <RTCView streamURL={props.remoteStreamUrl} style={styles.hiddenRtcView} />
           ) : null}
           <VoiceDiagnosticsPanel diagnostics={props.voiceDiagnostics} />
+          <TestModePanel
+            checks={props.diagnosticChecks}
+            isRunning={props.isRunningDiagnostics}
+            lastServerDiagnostics={props.lastServerDiagnostics}
+            onRun={props.onRunDiagnostics}
+          />
           <Pressable
             style={[styles.toggleButton, props.forceSpeaker && styles.toggleButtonActive]}
             onPress={props.toggleForceSpeaker}
@@ -1248,6 +1477,62 @@ function VoiceDiagnosticsPanel({ diagnostics }: { diagnostics: VoiceDiagnostics 
           <Text style={styles.diagnosticsValue}>{value}</Text>
         </View>
       ))}
+    </View>
+  );
+}
+
+function TestModePanel({
+  checks,
+  isRunning,
+  lastServerDiagnostics,
+  onRun
+}: {
+  checks: DiagnosticCheck[];
+  isRunning: boolean;
+  lastServerDiagnostics: string;
+  onRun: () => void;
+}) {
+  const dotStyles: Record<DiagnosticStatus, object> = {
+    fail: styles.testDot_fail,
+    idle: styles.testDot_idle,
+    pass: styles.testDot_pass,
+    running: styles.testDot_running,
+    warn: styles.testDot_warn
+  };
+
+  return (
+    <View style={styles.testPanel}>
+      <View style={styles.testHeader}>
+        <View>
+          <Text style={styles.testTitle}>Test Mode</Text>
+          <Text style={styles.testSubtitle}>Run on both iPhones in the same room</Text>
+        </View>
+        <Pressable
+          disabled={isRunning}
+          onPress={onRun}
+          style={[styles.testButton, isRunning && styles.testButtonDisabled]}
+        >
+          <Text style={styles.testButtonText}>{isRunning ? "Checking" : "Run"}</Text>
+        </Pressable>
+      </View>
+
+      <Text style={styles.testServerLine} numberOfLines={2}>
+        {lastServerDiagnostics}
+      </Text>
+
+      <View style={styles.testRows}>
+        {checks.map((check) => (
+          <View style={styles.testRow} key={check.key}>
+            <View style={[styles.testDot, dotStyles[check.status]]} />
+            <View style={styles.testTextBlock}>
+              <Text style={styles.testLabel}>{check.label}</Text>
+              <Text style={styles.testDetail} numberOfLines={2}>
+                {check.detail}
+              </Text>
+            </View>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
@@ -1582,6 +1867,96 @@ const styles = StyleSheet.create({
     color: "#a8b8a5",
     fontSize: 14,
     fontWeight: "700"
+  },
+  testButton: {
+    alignItems: "center",
+    backgroundColor: "#f3b23f",
+    borderRadius: 8,
+    justifyContent: "center",
+    minHeight: 42,
+    paddingHorizontal: 16
+  },
+  testButtonDisabled: {
+    opacity: 0.6
+  },
+  testButtonText: {
+    color: "#151208",
+    fontSize: 14,
+    fontWeight: "900"
+  },
+  testDetail: {
+    color: "#a8b8a5",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 16
+  },
+  testDot: {
+    borderRadius: 5,
+    height: 10,
+    marginTop: 4,
+    width: 10
+  },
+  testDot_fail: {
+    backgroundColor: "#d94b3d"
+  },
+  testDot_idle: {
+    backgroundColor: "#647063"
+  },
+  testDot_pass: {
+    backgroundColor: "#43c26f"
+  },
+  testDot_running: {
+    backgroundColor: "#f3b23f"
+  },
+  testDot_warn: {
+    backgroundColor: "#d69c32"
+  },
+  testHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10,
+    justifyContent: "space-between"
+  },
+  testLabel: {
+    color: "#f6f1dc",
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  testPanel: {
+    backgroundColor: "#101912",
+    borderColor: "#314133",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 10,
+    padding: 12
+  },
+  testRow: {
+    flexDirection: "row",
+    gap: 9
+  },
+  testRows: {
+    gap: 8
+  },
+  testServerLine: {
+    color: "#f3b23f",
+    fontSize: 12,
+    fontWeight: "800",
+    lineHeight: 16
+  },
+  testSubtitle: {
+    color: "#a8b8a5",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 2
+  },
+  testTextBlock: {
+    flex: 1,
+    gap: 2
+  },
+  testTitle: {
+    color: "#f6f1dc",
+    fontSize: 16,
+    fontWeight: "900"
   },
   subtitle: {
     color: "#a8b8a5",
