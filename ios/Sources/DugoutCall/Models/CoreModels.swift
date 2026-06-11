@@ -20,7 +20,20 @@ public enum ConnectionState: String, Codable {
     case idle
     case connecting
     case connected
+    case reconnecting
     case disconnected
+}
+
+public struct LiveKitVoiceCredentials: Codable, Equatable {
+    public let serverUrl: String
+    public let token: String
+    public let roomName: String
+
+    public init(serverUrl: String, token: String, roomName: String) {
+        self.serverUrl = serverUrl
+        self.token = token
+        self.roomName = roomName
+    }
 }
 
 public struct Room: Codable, Equatable, Identifiable {

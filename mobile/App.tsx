@@ -410,7 +410,10 @@ export default function App() {
       const code = roomCodeRef.current || room?.code || joinCode.trim();
       if (code.length === 6) {
         try {
-          const snapshot = await requestJson<RoomDiagnosticSnapshot>(`/rooms/${code}/diagnostics`, { method: "GET" });
+          const snapshot = await requestJson<RoomDiagnosticSnapshot>(`/rooms/${code}/diagnostics`, {
+            method: "GET",
+            headers: room?.token ? { Authorization: `Bearer ${room.token}` } : undefined
+          });
           const summary = roomDiagnosticSummary(snapshot);
           const hasCoach = snapshot.recentEvents.some((event) => event.kind === "socket_joined" && event.role === "coach");
           const hasCatcher = snapshot.recentEvents.some((event) => event.kind === "socket_joined" && event.role === "catcher");
@@ -566,7 +569,7 @@ export default function App() {
     setRole(nextRole);
   };
 
-  const connectSocket = (nextRole: Role, code: string, displayName: string) => {
+  const connectSocket = (nextRole: Role, code: string, displayName: string, token: string) => {
     disconnectSocket();
     roleRef.current = nextRole;
     roomCodeRef.current = code;
@@ -578,7 +581,7 @@ export default function App() {
     socket.onopen = () => {
       setConnection("connected");
       setLastNetworkEvent(`Socket joined ${code} at ${compactClock()}`);
-      socket.send(JSON.stringify({ type: "join_room", code, role: nextRole, displayName }));
+      socket.send(JSON.stringify({ type: "join_room", code, role: nextRole, displayName, token }));
     };
 
     socket.onmessage = (event) => {
@@ -937,7 +940,7 @@ export default function App() {
       roomCodeRef.current = response.code;
       setCurrentRole("coach");
       setScreen("coach");
-      connectSocket("coach", response.code, "Coach");
+      connectSocket("coach", response.code, "Coach", response.token);
       await connectLiveKitVoice(response.livekit, "coach");
     } catch (error) {
       Alert.alert("Could not create room", error instanceof Error ? error.message : "Try again.");
@@ -963,7 +966,7 @@ export default function App() {
       setCurrentRole("catcher");
       setScreen("catcher");
       setCatcherState("Connected");
-      connectSocket("catcher", code, "Catcher");
+      connectSocket("catcher", code, "Catcher", response.token);
       await connectLiveKitVoice(response.livekit, "catcher");
       speak("DugoutCall connected.");
     } catch (error) {

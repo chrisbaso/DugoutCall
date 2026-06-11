@@ -20,4 +20,17 @@ extension View {
             .foregroundStyle(.white)
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }
+
+    /// High-consequence one-tap calls (Pitchout/Pickoff): visually distinct
+    /// from ordinary presets so they are hard to hit by accident.
+    func specialCallTile() -> some View {
+        self
+            .font(.headline.bold())
+            .minimumScaleFactor(0.72)
+            .lineLimit(2)
+            .frame(maxWidth: .infinity, minHeight: 64)
+            .background(DugoutTheme.accent)
+            .foregroundStyle(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
 }

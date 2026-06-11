@@ -81,6 +81,40 @@ export class RoomStore {
     this.rooms.delete(code);
   }
 
+  /**
+   * Re-creates a room from verified signed-token claims. Used to recover
+   * transparently after a relay restart: the HMAC signature is proof this
+   * relay issued the room. Mode is not encoded in token claims, so restored
+   * rooms default to game mode.
+   */
+  restoreRoom(claims: { roomCode: string; expiresAt: number }): Room {
+    const existing = this.rooms.get(claims.roomCode);
+    if (existing && existing.expiresAt > this.now()) return existing;
+    if (claims.expiresAt <= this.now()) throw new Error('Room expired');
+
+    const room: Room = {
+      code: claims.roomCode,
+      mode: 'game',
+      createdAt: this.now(),
+      expiresAt: claims.expiresAt
+    };
+    this.rooms.set(claims.roomCode, room);
+    return room;
+  }
+
+  /** Deletes expired rooms and returns their codes so callers can notify clients. */
+  sweepExpired(): string[] {
+    const now = this.now();
+    const removed: string[] = [];
+    for (const [code, room] of this.rooms.entries()) {
+      if (room.expiresAt <= now) {
+        this.rooms.delete(code);
+        removed.push(code);
+      }
+    }
+    return removed;
+  }
+
   private uniqueCode(): string {
     for (let i = 0; i < 20; i += 1) {
       const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
@@ -91,9 +125,6 @@ export class RoomStore {
   }
 
   private cleanupExpired(): void {
-    const now = this.now();
-    for (const [code, room] of this.rooms.entries()) {
-      if (room.expiresAt <= now) this.rooms.delete(code);
-    }
+    this.sweepExpired();
   }
 }

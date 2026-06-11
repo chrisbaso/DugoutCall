@@ -6,5 +6,10 @@
     <string>DugoutCall uses the microphone only while the coach presses and holds Talk.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>DugoutCall connects coach and catcher devices through a local or hosted DugoutCall server.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
 </dict>
 </plist>

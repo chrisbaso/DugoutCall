@@ -27,4 +27,33 @@ final class MessageCodingTests: XCTestCase {
 
         XCTAssertEqual(message, .roleAssigned(code: "123456", role: .catcher, mode: .game, expiresAt: 123456789))
     }
+
+    func testJoinRoomEncodesToken() throws {
+        let message = DugoutMessage.joinRoom(code: "123456", role: .coach, displayName: "Coach", token: "abc.def")
+        let data = try JSONEncoder.dugoutCall.encode(message)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        XCTAssertEqual(object?["type"] as? String, "join_room")
+        XCTAssertEqual(object?["token"] as? String, "abc.def")
+    }
+
+    func testCallAckDecodesFromServer() throws {
+        let json = """
+        {"type":"call_ack","id":"call-1","recipientCount":1,"timestamp":123}
+        """.data(using: .utf8)!
+
+        let message = try JSONDecoder.dugoutCall.decode(DugoutMessage.self, from: json)
+
+        XCTAssertEqual(message, .callAck(id: "call-1", recipientCount: 1, timestamp: 123))
+    }
+
+    func testPeerStatusDecodesFromServer() throws {
+        let json = """
+        {"type":"peer_status","role":"catcher","connected":true}
+        """.data(using: .utf8)!
+
+        let message = try JSONDecoder.dugoutCall.decode(DugoutMessage.self, from: json)
+
+        XCTAssertEqual(message, .peerStatus(role: .catcher, connected: true))
+    }
 }

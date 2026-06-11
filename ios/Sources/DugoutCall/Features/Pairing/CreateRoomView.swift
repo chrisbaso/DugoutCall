@@ -8,6 +8,7 @@ struct CreateRoomView: View {
     let onCreated: (CreateRoomResponse) -> Void
 
     @State private var isCreating = false
+    @State private var progressText: String?
     @State private var response: CreateRoomResponse?
     @State private var error: String?
 
@@ -37,7 +38,7 @@ struct CreateRoomView: View {
                     }
                     .primaryDugoutButton()
                 } else {
-                    Button(isCreating ? "Creating..." : "Create Room") {
+                    Button(isCreating ? (progressText ?? "Creating...") : "Create Room") {
                         Task { await createRoom() }
                     }
                     .primaryDugoutButton()
@@ -61,17 +62,27 @@ struct CreateRoomView: View {
             return
         }
         isCreating = true
-        defer { isCreating = false }
+        error = nil
+        defer {
+            isCreating = false
+            progressText = nil
+        }
         do {
             let created = try await roomService.createRoom(
                 serverURL: url,
                 coachName: settings.coachName,
                 teamName: settings.teamName,
-                mode: settings.mode
+                mode: settings.mode,
+                progress: { status in progressText = status }
             )
             response = created
-            webSocket.connect(serverURL: url)
-            try await webSocket.join(code: created.code, role: .coach, displayName: settings.coachName)
+            webSocket.start(
+                serverURL: url,
+                code: created.code,
+                role: .coach,
+                displayName: settings.coachName,
+                token: created.token
+            )
         } catch {
             self.error = error.localizedDescription
         }

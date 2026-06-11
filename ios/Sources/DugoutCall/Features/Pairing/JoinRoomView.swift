@@ -7,6 +7,7 @@ struct JoinRoomView: View {
 
     @State private var code = ""
     @State private var isJoining = false
+    @State private var progressText: String?
     @State private var error: String?
 
     private let roomService = RoomService()
@@ -35,7 +36,7 @@ struct JoinRoomView: View {
                         code = String(newValue.filter(\.isNumber).prefix(6))
                     }
 
-                Button(isJoining ? "Joining..." : "Join Room") {
+                Button(isJoining ? (progressText ?? "Joining...") : "Join Room") {
                     Task { await joinRoom() }
                 }
                 .primaryDugoutButton()
@@ -58,11 +59,26 @@ struct JoinRoomView: View {
             return
         }
         isJoining = true
-        defer { isJoining = false }
+        error = nil
+        defer {
+            isJoining = false
+            progressText = nil
+        }
         do {
-            let joined = try await roomService.joinRoom(serverURL: url, code: code, role: .catcher, displayName: "Catcher")
-            webSocket.connect(serverURL: url)
-            try await webSocket.join(code: joined.code, role: .catcher, displayName: "Catcher")
+            let joined = try await roomService.joinRoom(
+                serverURL: url,
+                code: code,
+                role: .catcher,
+                displayName: "Catcher",
+                progress: { status in progressText = status }
+            )
+            webSocket.start(
+                serverURL: url,
+                code: joined.code,
+                role: .catcher,
+                displayName: "Catcher",
+                token: joined.token
+            )
             onJoined(joined)
         } catch {
             self.error = error.localizedDescription

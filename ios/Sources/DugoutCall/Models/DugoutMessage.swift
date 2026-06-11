@@ -2,12 +2,14 @@ import Foundation
 
 public enum DugoutMessage: Equatable {
     case createRoom(coachName: String?, teamName: String?)
-    case joinRoom(code: String, role: UserRole, displayName: String?)
+    case joinRoom(code: String, role: UserRole, displayName: String?, token: String?)
     case roleAssigned(code: String, role: UserRole, mode: AppMode, expiresAt: Int64)
     case pitchCall(PitchCall)
     case pttStart(timestamp: Int64)
     case pttStop(timestamp: Int64)
     case heartbeat(timestamp: Int64)
+    case callAck(id: String, recipientCount: Int, timestamp: Int64)
+    case peerStatus(role: UserRole, connected: Bool)
     case roomClosed(reason: String)
     case error(message: String)
 }
@@ -22,11 +24,14 @@ extension DugoutMessage: Codable {
         case coachName
         case teamName
         case displayName
+        case token
         case id
         case pitch
         case location
         case spokenText
         case timestamp
+        case recipientCount
+        case connected
         case reason
         case message
     }
@@ -45,7 +50,8 @@ extension DugoutMessage: Codable {
             self = .joinRoom(
                 code: try container.decode(String.self, forKey: .code),
                 role: try container.decode(UserRole.self, forKey: .role),
-                displayName: try container.decodeIfPresent(String.self, forKey: .displayName)
+                displayName: try container.decodeIfPresent(String.self, forKey: .displayName),
+                token: try container.decodeIfPresent(String.self, forKey: .token)
             )
         case "role_assigned":
             self = .roleAssigned(
@@ -68,6 +74,17 @@ extension DugoutMessage: Codable {
             self = .pttStop(timestamp: try container.decode(Int64.self, forKey: .timestamp))
         case "heartbeat":
             self = .heartbeat(timestamp: try container.decode(Int64.self, forKey: .timestamp))
+        case "call_ack":
+            self = .callAck(
+                id: try container.decode(String.self, forKey: .id),
+                recipientCount: try container.decode(Int.self, forKey: .recipientCount),
+                timestamp: try container.decode(Int64.self, forKey: .timestamp)
+            )
+        case "peer_status":
+            self = .peerStatus(
+                role: try container.decode(UserRole.self, forKey: .role),
+                connected: try container.decode(Bool.self, forKey: .connected)
+            )
         case "room_closed":
             self = .roomClosed(reason: try container.decode(String.self, forKey: .reason))
         case "error":
@@ -85,11 +102,12 @@ extension DugoutMessage: Codable {
             try container.encode("create_room", forKey: .type)
             try container.encodeIfPresent(coachName, forKey: .coachName)
             try container.encodeIfPresent(teamName, forKey: .teamName)
-        case .joinRoom(let code, let role, let displayName):
+        case .joinRoom(let code, let role, let displayName, let token):
             try container.encode("join_room", forKey: .type)
             try container.encode(code, forKey: .code)
             try container.encode(role, forKey: .role)
             try container.encodeIfPresent(displayName, forKey: .displayName)
+            try container.encodeIfPresent(token, forKey: .token)
         case .roleAssigned(let code, let role, let mode, let expiresAt):
             try container.encode("role_assigned", forKey: .type)
             try container.encode(code, forKey: .code)
@@ -112,6 +130,15 @@ extension DugoutMessage: Codable {
         case .heartbeat(let timestamp):
             try container.encode("heartbeat", forKey: .type)
             try container.encode(timestamp, forKey: .timestamp)
+        case .callAck(let id, let recipientCount, let timestamp):
+            try container.encode("call_ack", forKey: .type)
+            try container.encode(id, forKey: .id)
+            try container.encode(recipientCount, forKey: .recipientCount)
+            try container.encode(timestamp, forKey: .timestamp)
+        case .peerStatus(let role, let connected):
+            try container.encode("peer_status", forKey: .type)
+            try container.encode(role, forKey: .role)
+            try container.encode(connected, forKey: .connected)
         case .roomClosed(let reason):
             try container.encode("room_closed", forKey: .type)
             try container.encode(reason, forKey: .reason)

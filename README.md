@@ -76,15 +76,18 @@ The local server defaults to `http://localhost:8787`. Native iOS clients should 
 Endpoints:
 
 - `GET /health`
-- `POST /rooms`
-- `POST /rooms/:code/join`
-- WebSocket on the same host for room join, pitch relay, push-to-talk start/stop, and heartbeats.
+- `POST /rooms` — returns a signed room token; rate limited per IP.
+- `POST /rooms/:code/join` — rate limited per IP with per-code brute-force lockout. Send the previously issued token as `Authorization: Bearer <token>` to transparently recover the room after a relay restart.
+- `GET /rooms/:code/diagnostics` — requires `Authorization: Bearer <token>` for the same room.
+- WebSocket on the same host for room join, pitch relay, push-to-talk start/stop, and heartbeats. `join_room` requires the signed `token` issued by the HTTP endpoints; the session role comes from the verified token, not the client.
+- After relaying a pitch call the server acks the coach socket with `call_ack` (`recipientCount`), and reports catcher socket presence to the coach via `peer_status`.
 
 Production notes:
 
 - Run behind TLS and expose WebSockets as `wss://`.
-- Set `DUGOUTCALL_TOKEN_SECRET` to a strong secret.
+- Set `DUGOUTCALL_TOKEN_SECRET` to a strong secret. With `NODE_ENV=production` the server refuses to start without it.
 - Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` to enable LiveKit voice rooms.
+- Optionally set `DUGOUTCALL_CORS_ORIGINS` (comma-separated) to allow browser origins; unset in production means no CORS (native apps are unaffected).
 - Do not commit production secrets.
 - Keep room TTL short with `ROOM_TTL_MS`.
 
@@ -250,7 +253,7 @@ Practice Mode is present as a settings/admin toggle for future testing workflows
 - Pitchout and Pickoff remain one-tap presets.
 - AVAudioSession configuration for coach push-to-talk and catcher playback.
 - Expo/TestFlight push-to-talk streams coach microphone audio one-way to the catcher phone through WebRTC while Hold Talk is pressed.
-- Native SwiftUI push-to-talk still needs the iOS WebRTC or LiveKit media transport adapter.
+- Native SwiftUI push-to-talk streams coach voice one-way through LiveKit when the backend has LiveKit configured (requires verification on physical devices).
 
 ## Testing
 

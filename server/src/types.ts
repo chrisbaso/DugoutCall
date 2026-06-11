@@ -49,7 +49,7 @@ export type SignalingMessage = WebRTCOfferMessage | WebRTCAnswerMessage | ICECan
 
 export type ClientMessage =
   | { type: 'create_room'; coachName?: string; teamName?: string }
-  | { type: 'join_room'; code: string; role: UserRole; displayName?: string; token?: string }
+  | { type: 'join_room'; code: string; role: UserRole; displayName?: string; token: string }
   | PitchCallMessage
   | SignalingMessage
   | { type: 'ptt_start'; timestamp?: number }
@@ -63,5 +63,7 @@ export type ServerMessage =
   | { type: 'ptt_start'; timestamp: number }
   | { type: 'ptt_stop'; timestamp: number }
   | { type: 'heartbeat'; timestamp: number }
+  | { type: 'call_ack'; id: string; recipientCount: number; timestamp: number }
+  | { type: 'peer_status'; role: UserRole; connected: boolean }
   | { type: 'room_closed'; reason: string }
   | { type: 'error'; message: string };

@@ -20,6 +20,7 @@ const customizationKey = "dugoutcall.customizations.v2";
 const state = {
   role: "",
   roomCode: "",
+  token: "",
   socket: null,
   pitch: "",
   location: "",
@@ -164,6 +165,7 @@ async function createRoom() {
   }, "coachConnection");
   state.role = "coach";
   state.roomCode = room.code;
+  state.token = room.token;
   $("coachRoomCode").textContent = room.code;
   $("coachBannerCode").textContent = room.code;
   $("coachRoomCard").classList.remove("hidden");
@@ -178,11 +180,12 @@ async function joinRoom() {
   if (code.length !== 6) return;
   $("joinRoom").disabled = true;
   try {
-    await fetchJSONWithRetry(`/rooms/${code}/join`, {
+    const joined = await fetchJSONWithRetry(`/rooms/${code}/join`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role: "catcher", displayName: "Catcher" })
     }, "catcherConnection");
+    state.token = joined.token;
   } catch {
     $("catcherConnection").textContent = "Join failed";
     $("joinRoom").disabled = false;
@@ -205,7 +208,10 @@ function startDiagnosticsPolling(code) {
 
 async function pollDiagnostics(code) {
   try {
-    const response = await fetchJSONWithRetry(`/rooms/${code}/diagnostics`, { method: "GET" });
+    const response = await fetchJSONWithRetry(`/rooms/${code}/diagnostics`, {
+      method: "GET",
+      headers: state.token ? { Authorization: `Bearer ${state.token}` } : undefined
+    });
     const pitchCount = response.counters?.pitch_call || 0;
     const socketJoins = response.counters?.socket_joined || 0;
     const lastEvent = response.recentEvents?.at(-1);
@@ -226,7 +232,7 @@ function connectSocket(role, code, displayName = role) {
   state.socket.onopen = () => {
     setNetwork("Connected", true);
     if (role === "catcher") setCatcherDiagnostic(`Socket opened for room ${code}`);
-    state.socket.send(JSON.stringify({ type: "join_room", code, role, displayName }));
+    state.socket.send(JSON.stringify({ type: "join_room", code, role, displayName, token: state.token }));
   };
   state.socket.onclose = () => {
     setNetwork("Disconnected");
