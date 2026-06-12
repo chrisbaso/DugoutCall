@@ -2288,76 +2288,59 @@ function CoachScreen(props: {
 function SprayFan({ spray }: { spray: SprayPayload }) {
   if (!spray) {
     return (
-      <View style={[styles.reportFan, styles.sprayFanEmpty]}>
+      <View style={[styles.shadeChart, styles.sprayFanEmpty]}>
         <Text style={styles.sprayEmptyText}>No spray</Text>
       </View>
     );
   }
 
-  if (spray.bands === 1) {
-    return <ReportStyleFan directionOnly inner={spray.direction} outer={spray.direction} />;
-  }
+  const totals = sprayTotals(spray);
+  const lanes = [
+    { key: "pull", label: "PULL", value: totals.pull },
+    { key: "center", label: "CTR", value: totals.center },
+    { key: "oppo", label: "OPPO", value: totals.oppo }
+  ];
+  const maxValue = Math.max(1, ...lanes.map((lane) => lane.value));
+  const dominant = lanes.reduce((leader, lane) => (lane.value > leader.value ? lane : leader), lanes[0]);
 
-  return <ReportStyleFan inner={spray.infield} outer={spray.outfield} />;
-}
-
-function ReportStyleFan({
-  directionOnly,
-  inner,
-  outer
-}: {
-  directionOnly?: boolean;
-  inner: SprayDirection;
-  outer: SprayDirection;
-}) {
   return (
-    <View style={styles.reportFan}>
-      <View style={styles.reportFanBackdrop} />
-      <View style={[styles.reportFoulLine, styles.reportFoulLineLeft]} />
-      <View style={[styles.reportFoulLine, styles.reportFoulLineRight]} />
-
-      <FanCell band="air" position="left" value={outer.pull} />
-      <FanCell band="air" position="middle" value={outer.center} />
-      <FanCell band="air" position="right" value={outer.oppo} />
-
-      {!directionOnly && (
-        <>
-          <FanCell band="gb" position="left" value={inner.pull} />
-          <FanCell band="gb" position="middle" value={inner.center} />
-          <FanCell band="gb" position="right" value={inner.oppo} />
-        </>
-      )}
-
-      <View style={styles.reportHomePlate} />
-    </View>
-  );
-}
-
-function FanCell({
-  band,
-  position,
-  value
-}: {
-  band: "air" | "gb";
-  position: "left" | "middle" | "right";
-  value: number;
-}) {
-  const bandStyle = band === "air" ? styles.reportFanAir : styles.reportFanGb;
-  const positionStyle =
-    band === "air"
-      ? position === "left"
-        ? styles.reportFanAirLeft
-        : position === "middle"
-          ? styles.reportFanAirMiddle
-          : styles.reportFanAirRight
-      : position === "left"
-        ? styles.reportFanGbLeft
-        : position === "middle"
-          ? styles.reportFanGbMiddle
-          : styles.reportFanGbRight;
-  return (
-    <View style={[styles.reportFanCell, bandStyle, positionStyle, { opacity: sprayOpacity(value) }]}>
-      <Text style={[styles.reportFanText, band === "gb" && styles.reportFanTextSmall]}>{value}%</Text>
+    <View style={styles.shadeChart}>
+      <View style={styles.shadeHeader}>
+        <Text style={styles.shadeHeaderText}>SHADE</Text>
+        <Text style={styles.shadeHeaderSide}>{dominant.label}</Text>
+      </View>
+      <View style={styles.shadeField}>
+        <View style={[styles.shadeFoulLine, styles.shadeFoulLineLeft]} />
+        <View style={[styles.shadeFoulLine, styles.shadeFoulLineRight]} />
+        <View style={styles.shadeLanes}>
+          {lanes.map((lane) => {
+            const isDominant = lane.key === dominant.key;
+            const height = 18 + Math.round((lane.value / maxValue) * 32);
+            return (
+              <View style={styles.shadeLane} key={lane.key}>
+                <View
+                  style={[
+                    styles.shadeLaneFill,
+                    isDominant && styles.shadeLaneFillDominant,
+                    { height, opacity: shadeOpacity(lane.value, maxValue) }
+                  ]}
+                />
+              </View>
+            );
+          })}
+        </View>
+        <View style={styles.shadeHomePlate} />
+      </View>
+      <View style={styles.shadeLabels}>
+        {lanes.map((lane) => (
+          <View style={styles.shadeLabelCell} key={lane.key}>
+            <Text style={styles.shadeLabelText}>{lane.label}</Text>
+            <Text style={[styles.shadeValueText, lane.key === dominant.key && styles.shadeValueDominant]}>
+              {lane.value}
+            </Text>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
@@ -2447,8 +2430,8 @@ function shortPitch(pitch: string) {
   return pitch.length > 7 ? pitch.slice(0, 7) : pitch;
 }
 
-function sprayOpacity(value: number) {
-  return 0.32 + Math.min(0.68, Math.max(0, value) / 100);
+function shadeOpacity(value: number, maxValue: number) {
+  return 0.34 + Math.min(0.6, Math.max(0, value) / Math.max(1, maxValue) * 0.6);
 }
 
 function CatcherScreen(props: {
@@ -3578,124 +3561,117 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12
   },
-  reportFan: {
-    height: 108,
-    overflow: "hidden",
-    position: "relative",
-    width: 132
+  shadeChart: {
+    alignItems: "stretch",
+    backgroundColor: "#f8f6f0",
+    borderColor: "#d7d2c6",
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 4,
+    minHeight: 104,
+    padding: 6,
+    width: 120
   },
-  reportFanAir: {
-    backgroundColor: "#16314f"
-  },
-  reportFanAirLeft: {
-    borderBottomRightRadius: 26,
-    borderTopLeftRadius: 72,
-    height: 55,
-    left: 0,
-    top: 17,
-    transform: [{ rotate: "-18deg" }],
-    width: 52
-  },
-  reportFanAirMiddle: {
+  shadeField: {
+    backgroundColor: "#fbf9f3",
+    borderColor: "#c9c2b5",
     borderTopLeftRadius: 48,
     borderTopRightRadius: 48,
-    height: 62,
-    left: 42,
-    top: 5,
-    width: 48
-  },
-  reportFanAirRight: {
-    borderBottomLeftRadius: 26,
-    borderTopRightRadius: 72,
-    height: 55,
-    right: 0,
-    top: 17,
-    transform: [{ rotate: "18deg" }],
-    width: 52
-  },
-  reportFanBackdrop: {
-    backgroundColor: "#fbf9f3",
-    borderColor: "#b9b1a0",
-    borderRadius: 86,
     borderWidth: 1,
-    bottom: 6,
-    left: 2,
-    position: "absolute",
-    right: 2,
-    top: 0
+    height: 58,
+    overflow: "hidden",
+    position: "relative"
   },
-  reportFanCell: {
-    alignItems: "center",
-    borderColor: "#fbf9f3",
-    borderWidth: 1,
-    justifyContent: "center",
-    position: "absolute"
-  },
-  reportFanGb: {
-    backgroundColor: "#9a6b12"
-  },
-  reportFanGbLeft: {
-    borderBottomRightRadius: 16,
-    borderTopLeftRadius: 34,
-    height: 34,
-    left: 38,
-    top: 63,
-    transform: [{ rotate: "-16deg" }],
-    width: 34
-  },
-  reportFanGbMiddle: {
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
-    height: 38,
-    left: 54,
-    top: 57,
-    width: 28
-  },
-  reportFanGbRight: {
-    borderBottomLeftRadius: 16,
-    borderTopRightRadius: 34,
-    height: 34,
-    right: 38,
-    top: 63,
-    transform: [{ rotate: "16deg" }],
-    width: 34
-  },
-  reportFanText: {
-    color: "#1a2230",
-    fontSize: 10,
-    fontWeight: "900",
-    textShadowColor: "#fbf9f3",
-    textShadowOffset: { height: 0, width: 0 },
-    textShadowRadius: 2
-  },
-  reportFanTextSmall: {
-    fontSize: 9
-  },
-  reportFoulLine: {
-    backgroundColor: "#b9b1a0",
+  shadeFoulLine: {
+    backgroundColor: "#c7c0b3",
+    bottom: 2,
     height: 1,
     position: "absolute",
-    top: 78,
-    width: 84,
+    width: 58,
+    zIndex: 3
+  },
+  shadeFoulLineLeft: {
+    left: 1,
+    transform: [{ rotate: "42deg" }]
+  },
+  shadeFoulLineRight: {
+    right: 1,
+    transform: [{ rotate: "-42deg" }]
+  },
+  shadeHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between"
+  },
+  shadeHeaderSide: {
+    color: "#1f68a9",
+    fontSize: 10,
+    fontWeight: "900"
+  },
+  shadeHeaderText: {
+    color: "#736f66",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 0
+  },
+  shadeHomePlate: {
+    alignSelf: "center",
+    backgroundColor: "#1a2230",
+    borderRadius: 3,
+    bottom: 3,
+    height: 6,
+    position: "absolute",
+    width: 8,
     zIndex: 4
   },
-  reportFoulLineLeft: {
-    left: 0,
-    transform: [{ rotate: "43deg" }]
+  shadeLabelCell: {
+    alignItems: "center",
+    flex: 1,
+    gap: 1
   },
-  reportFoulLineRight: {
-    right: 0,
-    transform: [{ rotate: "-43deg" }]
+  shadeLabels: {
+    flexDirection: "row",
+    gap: 4
   },
-  reportHomePlate: {
-    backgroundColor: "#1a2230",
-    borderRadius: 4,
-    bottom: 6,
-    height: 6,
-    left: 63,
+  shadeLabelText: {
+    color: "#8b867d",
+    fontSize: 8,
+    fontWeight: "800"
+  },
+  shadeLane: {
+    alignItems: "center",
+    flex: 1,
+    justifyContent: "flex-end"
+  },
+  shadeLaneFill: {
+    backgroundColor: "#9fb9cf",
+    borderColor: "rgba(26, 34, 48, 0.12)",
+    borderRadius: 9,
+    borderWidth: 1,
+    width: 22
+  },
+  shadeLaneFillDominant: {
+    backgroundColor: "#1f68a9",
+    borderColor: "#15598f"
+  },
+  shadeLanes: {
+    alignItems: "flex-end",
+    bottom: 9,
+    flexDirection: "row",
+    gap: 5,
+    left: 9,
     position: "absolute",
-    width: 6,
-    zIndex: 5
+    right: 9,
+    top: 8,
+    zIndex: 2
+  },
+  shadeValueDominant: {
+    color: "#15598f"
+  },
+  shadeValueText: {
+    color: "#1a2230",
+    fontSize: 11,
+    fontWeight: "900"
   },
   screenTitle: {
     color: "#f6f1dc",
