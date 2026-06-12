@@ -7,6 +7,7 @@ struct CoachDashboardView: View {
     let routeState: AudioRouteState
     @ObservedObject var pitchService: PitchCallService
     @ObservedObject var pushToTalk: PushToTalkService
+    @ObservedObject var scouting: DiamondScoutLineupService
 
     @State private var selectedPitch: PitchType?
     @State private var selectedLocation: PitchLocation?
@@ -19,12 +20,7 @@ struct CoachDashboardView: View {
             DugoutTheme.background.ignoresSafeArea()
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    ConnectionBannerView(
-                        room: room,
-                        connectionState: webSocket.connectionState,
-                        routeState: routeState,
-                        isTalking: pushToTalk.isTransmitting
-                    )
+                    HitterCardView(scouting: scouting)
 
                     PresetGridView(presets: settings.presets) { preset in
                         Task {
@@ -51,6 +47,47 @@ struct CoachDashboardView: View {
             }
         }
         .navigationBarBackButtonHidden()
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                connectionStatus
+            }
+        }
+        .task {
+            await scouting.startGameSession()
+        }
+    }
+
+    private var connectionStatus: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(connectionColor)
+                .frame(width: 10, height: 10)
+                .accessibilityLabel("Connection \(webSocket.connectionState.rawValue)")
+            Text("Room \(room.code) · \(room.mode.label)")
+                .font(.subheadline.bold())
+                .foregroundStyle(.white)
+            Image(systemName: "airpodspro")
+                .font(.caption)
+                .foregroundStyle(routeState.isBluetoothActive ? Color.green : Color.secondary)
+                .accessibilityLabel(routeState.airPodsStatusText)
+            if pushToTalk.isTransmitting {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.caption)
+                    .foregroundStyle(DugoutTheme.warning)
+                    .accessibilityLabel("Live voice transmitting")
+            }
+        }
+    }
+
+    private var connectionColor: Color {
+        switch webSocket.connectionState {
+        case .connected:
+            return .green
+        case .connecting:
+            return DugoutTheme.warning
+        case .idle, .disconnected:
+            return DugoutTheme.accent
+        }
     }
 
     private var actionRow: some View {
@@ -90,41 +127,6 @@ struct CoachDashboardView: View {
     private func sendSelection() async {
         guard let selectedPitch else { return }
         try? await pitchService.send(pitch: selectedPitch, location: selectedLocation)
-    }
-}
-
-private struct ConnectionBannerView: View {
-    let room: Room
-    let connectionState: ConnectionState
-    let routeState: AudioRouteState
-    let isTalking: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Room \(room.code)")
-                    .font(.title2.bold())
-                Spacer()
-                Text(room.mode.label)
-                    .font(.headline.bold())
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(DugoutTheme.grass)
-                    .clipShape(Capsule())
-            }
-            HStack {
-                Label(connectionState.rawValue.capitalized, systemImage: "network")
-                Spacer()
-                Label(routeState.airPodsStatusText, systemImage: "airpodspro")
-            }
-            Text(isTalking ? "Live voice transmitting" : "Catcher connected")
-                .font(.headline)
-                .foregroundStyle(isTalking ? DugoutTheme.warning : .secondary)
-        }
-        .padding()
-        .background(DugoutTheme.panel)
-        .foregroundStyle(.white)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 

@@ -137,7 +137,7 @@ Native field-use priorities:
 
 ### Diamond Scout Integration
 
-The native SwiftUI app includes a Diamond Scout coach workflow with mock data fallback. From launch, tap `Diamond Scout` to open scouting screens without creating a DugoutCall room.
+The native SwiftUI app shows Diamond Scout hitter scouting ambiently on the pitch-calling screen: entering the Coach Dashboard batch-fetches and caches the opposing lineup's summaries, and a compact hitter card above the pitch grid updates as the coach advances batters. Tapping the card opens the full scouting report sheet. Mock data is used as a fallback so the flow works without the Diamond Scout backend.
 
 Diamond Scout setup and simulator test steps are in `docs/DIAMOND_SCOUT_IOS_HANDOFF.md`. The API contract is in `docs/INTEGRATION_API.md`.
 

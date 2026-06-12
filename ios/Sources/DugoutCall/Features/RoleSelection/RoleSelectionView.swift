@@ -2,7 +2,6 @@ import SwiftUI
 
 struct RoleSelectionView: View {
     let onSelect: (UserRole) -> Void
-    let onDiamondScout: () -> Void
 
     var body: some View {
         ZStack {
@@ -24,9 +23,6 @@ struct RoleSelectionView: View {
                     }
                     RoleButton(title: "Catcher Mode", systemImage: "airpodspro") {
                         onSelect(.catcher)
-                    }
-                    RoleButton(title: "Diamond Scout", systemImage: "rectangle.stack.person.crop.fill") {
-                        onDiamondScout()
                     }
                 }
                 .padding(.horizontal)
