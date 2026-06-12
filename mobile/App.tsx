@@ -1,4 +1,6 @@
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from "expo-av";
+import { Directory, File, Paths } from "expo-file-system";
+import * as SecureStore from "expo-secure-store";
 import * as Speech from "expo-speech";
 import { AudioSession as LiveKitAudioSession } from "@livekit/react-native";
 import { ConnectionState as LiveKitConnectionState, Room, RoomEvent, Track } from "livekit-client";
@@ -6,14 +8,17 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
+  Vibration,
   View
 } from "react-native";
 import {
@@ -30,6 +35,7 @@ type Role = "coach" | "catcher";
 type AppMode = "game" | "practice";
 type ConnectionState = "idle" | "connecting" | "connected" | "disconnected";
 type DiagnosticStatus = "idle" | "running" | "pass" | "warn" | "fail";
+type SendState = "idle" | "sending" | "sent" | "failed";
 
 type VoiceDiagnostics = {
   micActive: boolean;
@@ -121,21 +127,90 @@ type PresetCall = {
 
 type AppScreen = "role" | "coach" | "catcher" | "diamondScout";
 type DiamondScoutView = "home" | "opponents" | "games" | "gameDetail" | "currentHitter" | "hitterCard" | "debug";
+type CountBucket = "early" | "two_strikes" | "any";
+type ZoneTint = "hot" | "cold" | "none";
+type ScoutingSource = "mock" | "network" | "cache" | "none";
+type SprayDirection = { pull: number; center: number; oppo: number };
+type SprayPayload =
+  | { bands: 2; infield: SprayDirection; outfield: SprayDirection }
+  | { bands: 1; direction: SprayDirection }
+  | null;
 
 type ScoutHitter = {
   id: string;
+  jersey: string;
   name: string;
   bats: string;
   position: string;
+  verdict: string;
+  chips: { text: string; countBucket: CountBucket }[];
   plan: string;
   chaseZone: string;
   damageZone: string;
+  spray: SprayPayload;
+  zoneTints: ZoneTint[];
+  defensiveNote: string;
+  recommendedPitch: string;
+  recommendedZone: number;
   speed: string;
+  confidenceTier?: "none" | "tentative" | "confident" | "limited" | "moderate" | "high";
+  effectiveSample?: Record<string, number>;
+};
+
+type HitterSummaryApiResponse = {
+  schema_version: string;
+  opponent: {
+    id: number | string;
+    name: string;
+    season?: string | null;
+  };
+  summaries: HitterSummaryApiItem[];
+};
+
+type HitterSummaryApiItem = {
+  hitter_id: number | string;
+  jersey?: string | null;
+  name: string;
+  bats?: string | null;
+  confidence_tier?: ScoutHitter["confidenceTier"];
+  verdict?: string | null;
+  fallback_text?: string | null;
+  chips?: { text: string; count_bucket: CountBucket }[];
+  zone_tints?: ZoneTint[];
+  spray?: {
+    bands?: 1 | 2;
+    direction?: Partial<SprayDirection>;
+    infield?: Partial<SprayDirection>;
+    outfield?: Partial<SprayDirection>;
+    pull?: number;
+    center?: number;
+    oppo?: number;
+  } | null;
+  defensive_note?: string | null;
+  recommended_pitch?: string | null;
+  recommended_zone?: number | null;
+  effective_sample?: Record<string, number>;
+};
+
+type ScoutingCache = {
+  schemaVersion: string;
+  opponentId: string;
+  opponentName: string;
+  fetchedAt: number;
+  hitters: ScoutHitter[];
+  source: ScoutingSource;
+};
+
+type ScoutingLoadMetrics = {
+  lastColdLoadMs?: number;
+  lastWarmLoadMs?: number;
+  lastRefreshMs?: number;
+  lastLoadedAt?: number;
 };
 
 const testTone = require("./assets/test-tone.wav");
 const defaultBackendUrl = "https://dugoutcall.onrender.com";
-const pitches = ["Fastball", "Curveball", "Change-up"];
+const defaultPitchButtons = ["Fastball", "Curveball", "Change-up"];
 const locations = ["Up", "Down", "In", "Away", "Middle", "Up/In", "Up/Away", "Down/In", "Down/Away"];
 const contextButtons = ["0-0", "Ahead", "Behind", "2 Strikes", "Runner On"];
 const rtcConfiguration = {
@@ -158,32 +233,71 @@ const presets: PresetCall[] = [
 const diamondScoutMockHitters: ScoutHitter[] = [
   {
     id: "h1",
+    jersey: "8",
     name: "Mason Keller",
     bats: "R",
     position: "SS",
+    verdict: "Chases low-away, spin has played",
+    chips: [
+      { text: "Expand late", countBucket: "two_strikes" },
+      { text: "CB any count", countBucket: "any" }
+    ],
     plan: "Start soft away. Fastballs must stay up or off the plate.",
     chaseZone: "Slider down away",
     damageZone: "Middle-in fastball",
+    spray: {
+      bands: 2,
+      infield: { pull: 22, center: 10, oppo: 4 },
+      outfield: { pull: 26, center: 24, oppo: 14 }
+    },
+    zoneTints: ["hot", "none", "none", "none", "none", "cold", "none", "cold", "cold"],
+    defensiveNote: "Shade pull side",
+    recommendedPitch: "Curveball",
+    recommendedZone: 8,
     speed: "Above average"
   },
   {
     id: "h2",
+    jersey: "12",
     name: "Eli Brooks",
     bats: "L",
     position: "CF",
+    verdict: "Chases low-away, dead-red early",
+    chips: [
+      { text: "Start soft", countBucket: "early" },
+      { text: "Expand late", countBucket: "two_strikes" },
+      { text: "CH down", countBucket: "any" }
+    ],
     plan: "Fastball up early, change-up down when ahead.",
     chaseZone: "Change-up below zone",
     damageZone: "Outer-half curveball",
+    spray: {
+      bands: 2,
+      infield: { pull: 30, center: 12, oppo: 5 },
+      outfield: { pull: 25, center: 18, oppo: 10 }
+    },
+    zoneTints: ["hot", "hot", "none", "none", "none", "cold", "none", "cold", "cold"],
+    defensiveNote: "Shade pull, protect 5-6 hole",
+    recommendedPitch: "Change-up",
+    recommendedZone: 8,
     speed: "Plus"
   },
   {
     id: "h3",
+    jersey: "27",
     name: "Noah Price",
     bats: "R",
     position: "1B",
+    verdict: "Limited data - pitch your strengths",
+    chips: [],
     plan: "Do not double up middle. Curveball for called strike.",
     chaseZone: "Fastball above hands",
     damageZone: "Down and in",
+    spray: null,
+    zoneTints: ["none", "none", "none", "none", "none", "none", "none", "none", "none"],
+    defensiveNote: "Straight up until more data",
+    recommendedPitch: "Fastball",
+    recommendedZone: 5,
     speed: "Limited"
   }
 ];
@@ -191,6 +305,7 @@ const diamondScoutMockHitters: ScoutHitter[] = [
 const diamondScoutMock = {
   session: "Varsity Game Prep",
   tenant: "Demo Dugout",
+  opponentId: "demo-northview",
   opponent: "Northview",
   game: "Northview at DugoutCall",
   date: "Today",
@@ -201,6 +316,231 @@ const diamondScoutMock = {
   opponents: ["Northview", "Riverside", "West County"],
   games: ["Northview at DugoutCall", "DugoutCall at Riverside", "West County Tournament"],
   events: ["FB away called strike", "Curve down swinging strike", "Change-up down groundout"]
+};
+
+const scoutCacheFolderName = "dugoutcall-scouting-cache";
+const diamondScoutTokenKey = "dugoutcall.diamondScout.token";
+const diamondScoutBaseUrlKey = "dugoutcall.diamondScout.baseUrl";
+const diamondScoutOpponentIdKey = "dugoutcall.diamondScout.opponentId";
+const diamondScoutMockModeKey = "dugoutcall.diamondScout.mockMode";
+const pitchButtonsKey = "dugoutcall.pitchButtons";
+
+const mockScoutingCache = (): ScoutingCache => ({
+  fetchedAt: Date.now(),
+  hitters: diamondScoutMockHitters,
+  opponentId: diamondScoutMock.opponentId,
+  opponentName: diamondScoutMock.opponent,
+  schemaVersion: "mock",
+  source: "mock"
+});
+
+const noDataScoutingCache = (opponentId: string, opponentName = "Opponent"): ScoutingCache => ({
+  fetchedAt: Date.now(),
+  hitters: [
+    {
+      bats: "-",
+      chips: [],
+      chaseZone: "No live scouting data",
+      confidenceTier: "none",
+      damageZone: "No live scouting data",
+      defensiveNote: "Straight up until more data",
+      id: "no-data",
+      jersey: "--",
+      name: "No hitter data",
+      plan: "Limited data - pitch your strengths",
+      position: "H",
+      recommendedPitch: "",
+      recommendedZone: 0,
+      speed: "Unknown",
+      spray: null,
+      verdict: "Limited data - pitch your strengths",
+      zoneTints: ["none", "none", "none", "none", "none", "none", "none", "none", "none"]
+    }
+  ],
+  opponentId,
+  opponentName,
+  schemaVersion: "none",
+  source: "none"
+});
+
+const scoutCacheDirectory = () => {
+  const directory = new Directory(Paths.document, scoutCacheFolderName);
+  if (!directory.exists) {
+    directory.create({ idempotent: true, intermediates: true });
+  }
+  return directory;
+};
+
+const scoutCacheFile = (opponentId: string) =>
+  new File(scoutCacheDirectory(), `${encodeURIComponent(opponentId || "unknown")}.json`);
+
+const readPersistedScoutCache = async (opponentId: string): Promise<ScoutingCache | null> => {
+  try {
+    const file = scoutCacheFile(opponentId);
+    if (!file.exists) return null;
+    const parsed = JSON.parse(await file.text()) as ScoutingCache;
+    if (!parsed?.hitters?.length) return null;
+    return {
+      ...parsed,
+      hitters: parsed.hitters.map((hitter) => ({
+        ...hitter,
+        spray: normalizeSprayPayload(hitter.spray)
+      })),
+      source: "cache"
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writePersistedScoutCache = async (cache: ScoutingCache) => {
+  try {
+    scoutCacheFile(cache.opponentId).write(JSON.stringify({ ...cache, source: "cache" }));
+  } catch {
+    // Cache writes must never block the pitch-calling surface.
+  }
+};
+
+const mapPitchCode = (value?: string | null) => {
+  if (!value) return "";
+  const normalized = value.toUpperCase();
+  if (normalized === "FB") return "Fastball";
+  if (normalized === "CB") return "Curveball";
+  if (normalized === "CH") return "Change-up";
+  return value;
+};
+
+const normalizeZoneTints = (values?: ZoneTint[]): ZoneTint[] => {
+  const fallback: ZoneTint[] = ["none", "none", "none", "none", "none", "none", "none", "none", "none"];
+  if (!Array.isArray(values)) return fallback;
+  return fallback.map((fallbackValue, index) => {
+    const value = values[index];
+    return value === "hot" || value === "cold" || value === "none" ? value : fallbackValue;
+  });
+};
+
+const normalizePitchButtons = (values: string[]) => {
+  const seen = new Set<string>();
+  const cleaned = values
+    .map((value) => value.trim().replace(/\s+/g, " "))
+    .filter(Boolean)
+    .filter((value) => {
+      const key = value.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 6);
+  return cleaned.length ? cleaned : defaultPitchButtons;
+};
+
+const normalizeSprayDirection = (value?: Partial<SprayDirection> | null): SprayDirection => ({
+  center: Math.max(0, Math.round(value?.center ?? 0)),
+  oppo: Math.max(0, Math.round(value?.oppo ?? 0)),
+  pull: Math.max(0, Math.round(value?.pull ?? 0))
+});
+
+const normalizeSprayPayload = (value?: HitterSummaryApiItem["spray"] | SprayPayload): SprayPayload => {
+  if (!value) return null;
+  if ("bands" in value && value.bands === 2) {
+    return {
+      bands: 2,
+      infield: normalizeSprayDirection(value.infield),
+      outfield: normalizeSprayDirection(value.outfield)
+    };
+  }
+  if ("bands" in value && value.bands === 1) {
+    return {
+      bands: 1,
+      direction: normalizeSprayDirection(value.direction)
+    };
+  }
+  if ("pull" in value || "center" in value || "oppo" in value) {
+    return {
+      bands: 1,
+      direction: normalizeSprayDirection(value)
+    };
+  }
+  return null;
+};
+
+const sprayTotals = (spray: SprayPayload): SprayDirection => {
+  if (!spray) return { center: 0, oppo: 0, pull: 0 };
+  if (spray.bands === 1) return spray.direction;
+  return {
+    center: spray.infield.center + spray.outfield.center,
+    oppo: spray.infield.oppo + spray.outfield.oppo,
+    pull: spray.infield.pull + spray.outfield.pull
+  };
+};
+
+const spraySummaryText = (spray: SprayPayload) => {
+  if (!spray) return "No spray sample yet";
+  const totals = sprayTotals(spray);
+  return `Pull ${totals.pull} / Center ${totals.center} / Oppo ${totals.oppo}`;
+};
+
+const apiSummaryToHitter = (summary: HitterSummaryApiItem): ScoutHitter => {
+  const fallbackText = summary.fallback_text || "Limited data - pitch your strengths";
+  const verdict = summary.verdict || fallbackText;
+  const recommendedPitch = mapPitchCode(summary.recommended_pitch);
+  const recommendedZone = typeof summary.recommended_zone === "number" ? summary.recommended_zone : 0;
+  return {
+    bats: summary.bats || "-",
+    chips: (summary.chips ?? []).map((chip) => ({ countBucket: chip.count_bucket, text: chip.text })).slice(0, 3),
+    chaseZone: summary.recommended_zone ? `Recommended zone ${summary.recommended_zone}` : "No chase zone exposed",
+    confidenceTier: summary.confidence_tier,
+    damageZone: recommendedZone ? `Recommended zone ${recommendedZone}` : "No damage zone exposed",
+    defensiveNote: summary.defensive_note || "Straight up until more data",
+    effectiveSample: summary.effective_sample,
+    id: String(summary.hitter_id),
+    jersey: summary.jersey || "--",
+    name: summary.name,
+    plan: recommendedPitch && recommendedZone ? `${recommendedPitch} to zone ${recommendedZone}` : verdict,
+    position: "H",
+    recommendedPitch,
+    recommendedZone,
+    speed: "Not provided",
+    spray: normalizeSprayPayload(summary.spray),
+    verdict,
+    zoneTints: normalizeZoneTints(summary.zone_tints)
+  };
+};
+
+const fetchDiamondScoutHitterSummaries = async ({
+  baseUrl,
+  bearerToken,
+  opponentId,
+  signal
+}: {
+  baseUrl: string;
+  bearerToken: string;
+  opponentId: string;
+  signal?: AbortSignal;
+}): Promise<ScoutingCache> => {
+  const response = await fetch(`${normalizeBaseUrl(baseUrl)}/api/v1/opponents/${encodeURIComponent(opponentId)}/hitter-summaries`, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${bearerToken}`
+    },
+    signal
+  });
+
+  if (!response.ok) {
+    const errorPayload = await response.json().catch(() => null);
+    const message = errorPayload?.error?.message || `Diamond Scout request failed (${response.status})`;
+    throw new Error(message);
+  }
+
+  const payload = (await response.json()) as HitterSummaryApiResponse;
+  return {
+    fetchedAt: Date.now(),
+    hitters: payload.summaries.map(apiSummaryToHitter),
+    opponentId: String(payload.opponent.id),
+    opponentName: payload.opponent.name,
+    schemaVersion: payload.schema_version,
+    source: "network"
+  };
 };
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/$/, "");
@@ -263,6 +603,8 @@ export default function App() {
   const creatingOfferRef = useRef(false);
   const playedRemoteSubscriptionToneRef = useRef(false);
   const lastSpeechAtRef = useRef(0);
+  const talkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scoutingRefreshRef = useRef<AbortController | null>(null);
   const roleRef = useRef<Role | null>(null);
   const roomCodeRef = useRef("");
   const [screen, setScreen] = useState<AppScreen>("role");
@@ -270,7 +612,14 @@ export default function App() {
   const [backendUrl, setBackendUrl] = useState(defaultBackendUrl);
   const [diamondScoutBaseUrl, setDiamondScoutBaseUrl] = useState("");
   const [diamondScoutToken, setDiamondScoutToken] = useState("");
+  const [diamondScoutOpponentId, setDiamondScoutOpponentId] = useState(diamondScoutMock.opponentId);
   const [diamondScoutMockMode, setDiamondScoutMockMode] = useState(true);
+  const [diamondScoutCacheOnly, setDiamondScoutCacheOnly] = useState(false);
+  const [scoutingCache, setScoutingCache] = useState<ScoutingCache>(mockScoutingCache());
+  const [scoutingMetrics, setScoutingMetrics] = useState<ScoutingLoadMetrics>({});
+  const [currentHitterId, setCurrentHitterId] = useState(diamondScoutMock.currentHitterId);
+  const [scoutEnabled, setScoutEnabled] = useState(true);
+  const [pitchButtons, setPitchButtons] = useState(defaultPitchButtons);
   const [room, setRoom] = useState<RoomResponse | null>(null);
   const [joinCode, setJoinCode] = useState("");
   const [connection, setConnection] = useState<ConnectionState>("idle");
@@ -278,6 +627,7 @@ export default function App() {
   const [selectedPitch, setSelectedPitch] = useState("");
   const [selectedLocation, setSelectedLocation] = useState("");
   const [selectedContext, setSelectedContext] = useState("");
+  const [sendState, setSendState] = useState<SendState>("idle");
   const [lastCall, setLastCall] = useState<PitchCallMessage | null>(null);
   const [isTalking, setIsTalking] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("Voice ready");
@@ -297,12 +647,209 @@ export default function App() {
     void configureAudioForPlayback();
   }, []);
 
+  useEffect(() => {
+    const loadStoredDiamondScoutConfig = async () => {
+      const [baseUrl, token, opponentId, mockMode, storedPitchButtons] = await Promise.all([
+        SecureStore.getItemAsync(diamondScoutBaseUrlKey),
+        SecureStore.getItemAsync(diamondScoutTokenKey),
+        SecureStore.getItemAsync(diamondScoutOpponentIdKey),
+        SecureStore.getItemAsync(diamondScoutMockModeKey),
+        SecureStore.getItemAsync(pitchButtonsKey)
+      ]);
+      if (baseUrl) setDiamondScoutBaseUrl(baseUrl);
+      if (token) setDiamondScoutToken(token);
+      if (opponentId) setDiamondScoutOpponentId(opponentId);
+      if (mockMode) setDiamondScoutMockMode(mockMode === "true");
+      if (storedPitchButtons) {
+        try {
+          const parsed = JSON.parse(storedPitchButtons);
+          if (Array.isArray(parsed)) setPitchButtons(normalizePitchButtons(parsed));
+        } catch {
+          setPitchButtons(defaultPitchButtons);
+        }
+      }
+    };
+
+    void loadStoredDiamondScoutConfig();
+  }, []);
+
+  useEffect(() => {
+    void SecureStore.setItemAsync(diamondScoutBaseUrlKey, diamondScoutBaseUrl);
+  }, [diamondScoutBaseUrl]);
+
+  useEffect(() => {
+    void SecureStore.setItemAsync(diamondScoutTokenKey, diamondScoutToken);
+  }, [diamondScoutToken]);
+
+  useEffect(() => {
+    void SecureStore.setItemAsync(diamondScoutOpponentIdKey, diamondScoutOpponentId);
+  }, [diamondScoutOpponentId]);
+
+  useEffect(() => {
+    void SecureStore.setItemAsync(diamondScoutMockModeKey, String(diamondScoutMockMode));
+  }, [diamondScoutMockMode]);
+
+  useEffect(() => {
+    void SecureStore.setItemAsync(pitchButtonsKey, JSON.stringify(pitchButtons));
+  }, [pitchButtons]);
+
+  useEffect(() => {
+    if (selectedPitch && selectedPitch !== "Pickoff" && selectedPitch !== "Pitchout" && !pitchButtons.includes(selectedPitch)) {
+      setSelectedPitch("");
+    }
+  }, [pitchButtons, selectedPitch]);
+
   const currentPhrase = useMemo(
     () => phrase(selectedPitch, selectedLocation),
     [selectedPitch, selectedLocation]
   );
 
+  const liveDiamondScoutReady = Boolean(
+    normalizeBaseUrl(diamondScoutBaseUrl) && diamondScoutToken.trim() && diamondScoutOpponentId.trim()
+  );
+  const effectiveDiamondScoutMockMode = diamondScoutMockMode || !liveDiamondScoutReady;
+  const scoutingHitters = scoutingCache.hitters.length ? scoutingCache.hitters : noDataScoutingCache(diamondScoutOpponentId).hitters;
+  const fallbackScoutingHitter = diamondScoutMockHitters[0];
+  const currentScoutingHitter =
+    scoutingHitters.find((hitter) => hitter.id === currentHitterId) ?? scoutingHitters[0] ?? fallbackScoutingHitter;
+  const currentScoutingIndex = Math.max(
+    0,
+    scoutingHitters.findIndex((hitter) => hitter.id === currentScoutingHitter.id)
+  );
+  const onDeckScoutingHitter =
+    scoutingHitters[(currentScoutingIndex + 1) % scoutingHitters.length] ?? currentScoutingHitter;
+  const scoutAvailable =
+    scoutingCache.source !== "none" && currentScoutingHitter.id !== "no-data" && currentScoutingHitter.confidenceTier !== "none";
+  const scoutingMetaLabel = `${scoutingCache.source.toUpperCase()}${
+    scoutingMetrics.lastWarmLoadMs !== undefined
+      ? ` cache ${scoutingMetrics.lastWarmLoadMs}ms`
+      : scoutingMetrics.lastColdLoadMs !== undefined
+        ? ` load ${scoutingMetrics.lastColdLoadMs}ms`
+        : ""
+  }`;
+
   const apiUrl = (path: string) => `${normalizeBaseUrl(backendUrl)}${path}`;
+
+  useEffect(() => {
+    if (!scoutAvailable && scoutEnabled) {
+      setScoutEnabled(false);
+    }
+  }, [scoutAvailable, scoutEnabled]);
+
+  const triggerHaptic = (kind: "send_success" | "send_fail" | "mic_open" | "mic_close" | "mic_cutoff" | "scout_toggle") => {
+    const patterns: Record<typeof kind, number | number[]> = {
+      mic_close: 18,
+      mic_cutoff: [0, 90, 70, 90],
+      mic_open: 28,
+      scout_toggle: [0, 18, 28, 18],
+      send_fail: [0, 70, 40, 70],
+      send_success: 35
+    };
+    Vibration.vibrate(patterns[kind]);
+  };
+
+  const toggleScout = () => {
+    if (!scoutAvailable) return;
+    setScoutEnabled((current) => !current);
+    triggerHaptic("scout_toggle");
+  };
+
+  const applyScoutingCache = (cache: ScoutingCache) => {
+    setScoutingCache(cache);
+    if (!cache.hitters.some((hitter) => hitter.id === currentHitterId)) {
+      setCurrentHitterId(cache.hitters[0]?.id ?? "no-data");
+    }
+  };
+
+  const loadScoutingForGame = async (reason: "game_start" | "batter_advance" | "manual" = "game_start") => {
+    const startedAt = Date.now();
+
+    if (effectiveDiamondScoutMockMode) {
+      const cache = mockScoutingCache();
+      applyScoutingCache(cache);
+      setScoutingMetrics((current) => ({
+        ...current,
+        lastColdLoadMs: Date.now() - startedAt,
+        lastLoadedAt: Date.now()
+      }));
+      await writePersistedScoutCache(cache);
+      return;
+    }
+
+    const opponentId = diamondScoutOpponentId.trim();
+    const cached = await readPersistedScoutCache(opponentId);
+    if (cached) {
+      applyScoutingCache(cached);
+      setScoutingMetrics((current) => ({
+        ...current,
+        lastLoadedAt: cached.fetchedAt,
+        lastWarmLoadMs: Date.now() - startedAt
+      }));
+    }
+
+    if (diamondScoutCacheOnly) {
+      if (!cached) {
+        applyScoutingCache(noDataScoutingCache(opponentId));
+      }
+      return;
+    }
+
+    scoutingRefreshRef.current?.abort();
+    const controller = new AbortController();
+    scoutingRefreshRef.current = controller;
+
+    try {
+      const networkCache = await fetchDiamondScoutHitterSummaries({
+        baseUrl: diamondScoutBaseUrl,
+        bearerToken: diamondScoutToken,
+        opponentId,
+        signal: controller.signal
+      });
+      applyScoutingCache(networkCache);
+      await writePersistedScoutCache(networkCache);
+      setScoutingMetrics((current) => ({
+        ...current,
+        lastColdLoadMs: cached ? current.lastColdLoadMs : Date.now() - startedAt,
+        lastLoadedAt: networkCache.fetchedAt,
+        lastRefreshMs: cached || reason === "batter_advance" ? Date.now() - startedAt : current.lastRefreshMs
+      }));
+      setLastNetworkEvent(`Scouting refreshed at ${compactClock()}`);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (!cached) {
+        applyScoutingCache(noDataScoutingCache(opponentId));
+      }
+      setLastNetworkEvent(cached ? "Scouting cache active; live refresh failed" : "No scouting cache available");
+    } finally {
+      if (scoutingRefreshRef.current === controller) {
+        scoutingRefreshRef.current = null;
+      }
+    }
+  };
+
+  const advanceHitter = () => {
+    if (!scoutingHitters.length) return;
+    const nextHitter = scoutingHitters[(currentScoutingIndex + 1) % scoutingHitters.length];
+    setCurrentHitterId(nextHitter.id);
+    setSelectedPitch("");
+    setSelectedLocation("");
+    setSelectedContext("");
+    setLastNetworkEvent(`On deck cached: ${nextHitter.name}`);
+    void loadScoutingForGame("batter_advance");
+  };
+
+  useEffect(() => {
+    if (screen === "coach") {
+      void loadScoutingForGame("game_start");
+    }
+  }, [
+    diamondScoutBaseUrl,
+    diamondScoutCacheOnly,
+    diamondScoutMockMode,
+    diamondScoutOpponentId,
+    diamondScoutToken,
+    screen
+  ]);
 
   const updateVoiceDiagnostics = (patch: Partial<VoiceDiagnostics>) => {
     setVoiceDiagnostics((current) => ({ ...current, ...patch }));
@@ -1038,11 +1585,29 @@ export default function App() {
   };
 
   const sendPitchCall = (pitch: string, location?: string) => {
+    if (isTalking) {
+      setStatus("Mic live: pitch send locked");
+      setSendState("failed");
+      triggerHaptic("send_fail");
+      setTimeout(() => setSendState("idle"), 900);
+      return false;
+    }
     if (!pitch) {
       setStatus("Select a pitch first");
-      return;
+      setSendState("failed");
+      triggerHaptic("send_fail");
+      setTimeout(() => setSendState("idle"), 900);
+      return false;
+    }
+    if (!location && pitch !== "Pickoff" && pitch !== "Pitchout") {
+      setStatus("Select a location");
+      setSendState("failed");
+      triggerHaptic("send_fail");
+      setTimeout(() => setSendState("idle"), 900);
+      return false;
     }
 
+    setSendState("sending");
     const message: PitchCallMessage = {
       type: "pitch_call",
       id: callId(),
@@ -1056,7 +1621,18 @@ export default function App() {
       setLastCall(message);
       setStatus(`Sent: ${message.spokenText}`);
       setLastNetworkEvent(`Pitch sent at ${compactClock()}`);
+      setSelectedPitch("");
+      setSelectedLocation("");
+      setSelectedContext("");
+      setSendState("sent");
+      triggerHaptic("send_success");
+      setTimeout(() => setSendState("idle"), 900);
+      return true;
     }
+    setSendState("failed");
+    triggerHaptic("send_fail");
+    setTimeout(() => setSendState("idle"), 900);
+    return false;
   };
 
   const repeatLast = () => {
@@ -1136,12 +1712,19 @@ export default function App() {
       setIsTalking(true);
       setStatus("Live voice on");
       setVoiceStatus("LiveKit transmitting");
+      triggerHaptic("mic_open");
       updateVoiceDiagnostics({
         micActive: true,
         publishingAudio: true,
         localAudioTracks: 1
       });
       sendSocket({ type: "ptt_start", timestamp: Date.now() });
+      if (talkTimeoutRef.current) clearTimeout(talkTimeoutRef.current);
+      talkTimeoutRef.current = setTimeout(() => {
+        triggerHaptic("mic_cutoff");
+        stopTalk();
+        setStatus("Mic auto-cutoff at 15 seconds");
+      }, 15000);
     } catch (error) {
       setIsTalking(false);
       setVoiceStatus("Microphone unavailable");
@@ -1154,10 +1737,15 @@ export default function App() {
 
   const stopTalk = () => {
     if (!isTalking) return;
+    if (talkTimeoutRef.current) {
+      clearTimeout(talkTimeoutRef.current);
+      talkTimeoutRef.current = null;
+    }
     void liveKitRoomRef.current?.localParticipant.setMicrophoneEnabled(false);
     setIsTalking(false);
     setStatus("Live voice off");
     setVoiceStatus("LiveKit voice ready");
+    triggerHaptic("mic_close");
     updateVoiceDiagnostics({ micActive: false, publishingAudio: false });
     sendSocket({ type: "ptt_stop", timestamp: Date.now() });
   };
@@ -1197,15 +1785,17 @@ export default function App() {
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" />
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.title}>DugoutCall</Text>
-            <Text style={styles.subtitle}>Game Mode: one-way coach-to-catcher communication</Text>
+        {screen !== "coach" && (
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.title}>DugoutCall</Text>
+              <Text style={styles.subtitle}>Game Mode: one-way coach-to-catcher communication</Text>
+            </View>
+            <View style={[styles.badge, connection === "connected" && styles.badgeConnected]}>
+              <Text style={styles.badgeText}>{connection === "connected" ? "Online" : status}</Text>
+            </View>
           </View>
-          <View style={[styles.badge, connection === "connected" && styles.badgeConnected]}>
-            <Text style={styles.badgeText}>{connection === "connected" ? "Online" : status}</Text>
-          </View>
-        </View>
+        )}
 
         {screen === "role" && (
           <ScrollView contentContainerStyle={styles.content}>
@@ -1257,8 +1847,17 @@ export default function App() {
           <CoachScreen
             code={room?.code ?? "------"}
             currentPhrase={currentPhrase}
+            currentHitter={currentScoutingHitter}
+            scoutingSource={scoutingCache.source}
+            scoutingMetaLabel={scoutingMetaLabel}
+            opponentName={scoutingCache.opponentName}
+            onDeckHitter={onDeckScoutingHitter}
+            pitchButtons={pitchButtons}
+            scoutAvailable={scoutAvailable}
+            scoutEnabled={scoutEnabled}
             isTalking={isTalking}
             lastStatus={status}
+            sendState={sendState}
             voiceStatus={voiceStatus}
             voiceDiagnostics={voiceDiagnostics}
             diagnosticChecks={diagnosticChecks}
@@ -1273,6 +1872,10 @@ export default function App() {
             onRepeat={repeatLast}
             onReset={reset}
             onSend={() => sendPitchCall(selectedPitch, selectedLocation)}
+            onAdvanceHitter={advanceHitter}
+            onRefreshScouting={() => loadScoutingForGame("manual")}
+            onToggleScout={toggleScout}
+            onUpdatePitchButtons={(values) => setPitchButtons(normalizePitchButtons(values))}
             onStartTalk={startTalk}
             onStopTalk={stopTalk}
             openDiamondScout={() => setScreen("diamondScout")}
@@ -1291,11 +1894,18 @@ export default function App() {
           <DiamondScoutScreen
             apiBaseUrl={diamondScoutBaseUrl}
             bearerToken={diamondScoutToken}
-            mockMode={diamondScoutMockMode || !diamondScoutBaseUrl.trim() || !diamondScoutToken.trim()}
+            cacheOnly={diamondScoutCacheOnly}
+            mockMode={effectiveDiamondScoutMockMode}
             onBack={() => setScreen("role")}
+            opponentId={diamondScoutOpponentId}
+            scoutingCache={scoutingCache}
+            scoutingMetrics={scoutingMetrics}
+            onRefreshScouting={() => loadScoutingForGame("manual")}
             setApiBaseUrl={setDiamondScoutBaseUrl}
             setBearerToken={setDiamondScoutToken}
+            setCacheOnly={setDiamondScoutCacheOnly}
             setMockMode={setDiamondScoutMockMode}
+            setOpponentId={setDiamondScoutOpponentId}
           />
         )}
 
@@ -1332,15 +1942,28 @@ export default function App() {
 function CoachScreen(props: {
   code: string;
   currentPhrase: string;
+  currentHitter: ScoutHitter;
   isTalking: boolean;
   lastStatus: string;
   lastNetworkEvent: string;
+  opponentName: string;
+  onDeckHitter: ScoutHitter;
+  pitchButtons: string[];
+  scoutAvailable: boolean;
+  scoutEnabled: boolean;
+  scoutingMetaLabel: string;
+  scoutingSource: ScoutingSource;
+  sendState: SendState;
+  onAdvanceHitter: () => void;
   onClear: () => void;
   onRepeat: () => void;
   onReset: () => void;
+  onRefreshScouting: () => void;
   onSend: () => void;
   onStartTalk: () => void;
   onStopTalk: () => void;
+  onToggleScout: () => void;
+  onUpdatePitchButtons: (values: string[]) => void;
   openDiamondScout: () => void;
   selectedContext: string;
   selectedLocation: string;
@@ -1356,136 +1979,476 @@ function CoachScreen(props: {
   lastServerDiagnostics: string;
   onRunDiagnostics: () => void;
 }) {
-  const currentHitter =
-    diamondScoutMockHitters.find((hitter) => hitter.id === diamondScoutMock.currentHitterId) ?? diamondScoutMockHitters[0];
+  const [reportOpen, setReportOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pitchDraft, setPitchDraft] = useState(props.pitchButtons);
+  const currentHitter = props.currentHitter;
+  const scoutActive = props.scoutEnabled && props.scoutAvailable;
+  const zoneCells = [
+    { label: "Up/In", value: "Up/In", tint: scoutActive ? currentHitter.zoneTints[0] : "none" },
+    { label: "Up", value: "Up", tint: scoutActive ? currentHitter.zoneTints[1] : "none" },
+    { label: "Up/Away", value: "Up/Away", tint: scoutActive ? currentHitter.zoneTints[2] : "none" },
+    { label: "In", value: "In", tint: scoutActive ? currentHitter.zoneTints[3] : "none" },
+    { label: "Middle", value: "Middle", tint: scoutActive ? currentHitter.zoneTints[4] : "none" },
+    { label: "Away", value: "Away", tint: scoutActive ? currentHitter.zoneTints[5] : "none" },
+    { label: "Down/In", value: "Down/In", tint: scoutActive ? currentHitter.zoneTints[6] : "none" },
+    { label: "Down", value: "Down", tint: scoutActive ? currentHitter.zoneTints[7] : "none" },
+    { label: "Down/Away", value: "Down/Away", tint: scoutActive ? currentHitter.zoneTints[8] : "none" }
+  ];
+  const countBucket = countBucketForLabel(diamondScoutMock.count);
+  const filteredChips = currentHitter.chips
+    .filter((chip) => chip.countBucket === "any" || chip.countBucket === countBucket)
+    .slice(0, 3);
+  const pitchOptions = [...props.pitchButtons.filter((pitch) => pitch.toLowerCase() !== "pickoff"), "Pickoff"];
+  const specialPitch = props.selectedPitch === "Pickoff" || props.selectedPitch === "Pitchout";
+  const canSend = Boolean(props.selectedPitch && (props.selectedLocation || specialPitch) && !props.isTalking);
+  const sendLabel = props.isTalking
+    ? "Mic live to catcher"
+    : !canSend
+      ? "Select pitch + location"
+      : `Send ${shortPitch(props.selectedPitch)}${props.selectedLocation ? ` | ${props.selectedLocation}` : ""}`;
+  const sequenceLabel = diamondScoutMock.count === "0-0" ? "" : "FB Away C | CB Down W";
+
+  useEffect(() => {
+    if (settingsOpen) setPitchDraft(props.pitchButtons);
+  }, [props.pitchButtons, settingsOpen]);
+
+  const updatePitchDraft = (index: number, value: string) => {
+    setPitchDraft((current) => current.map((pitch, pitchIndex) => (pitchIndex === index ? value : pitch)));
+  };
+
+  const addPitchDraft = () => {
+    setPitchDraft((current) => (current.length >= 6 ? current : [...current, ""]));
+  };
+
+  const removePitchDraft = (index: number) => {
+    setPitchDraft((current) => current.filter((_, pitchIndex) => pitchIndex !== index));
+  };
+
+  const savePitchDraft = () => {
+    props.onUpdatePitchButtons(pitchDraft);
+    setSettingsOpen(false);
+  };
 
   return (
-    <View style={styles.flex}>
-      <ScrollView contentContainerStyle={styles.dashboard}>
-        <View style={styles.banner}>
-          <Text style={styles.bannerLabel}>Room</Text>
-          <Text style={styles.roomCode}>{props.code}</Text>
-          <Text style={styles.bannerMode}>Game Mode</Text>
-        </View>
-
-        <Text style={styles.selection}>{props.currentPhrase || "Select pitch and location"}</Text>
-        <Text style={styles.statusLine}>{props.lastStatus}</Text>
-        <Text style={styles.statusLine}>{props.lastNetworkEvent}</Text>
-        <Text style={styles.voiceLine}>{props.voiceStatus}</Text>
-        <VoiceDiagnosticsPanel diagnostics={props.voiceDiagnostics} />
-        <TestModePanel
-          checks={props.diagnosticChecks}
-          isRunning={props.isRunningDiagnostics}
-          lastServerDiagnostics={props.lastServerDiagnostics}
-          onRun={props.onRunDiagnostics}
-        />
-
-        <View style={styles.coachHitterCard}>
-          <View style={styles.coachHitterHeader}>
-            <View style={styles.flex}>
-              <Text style={styles.coachHitterLabel}>Current Hitter</Text>
-              <Text style={styles.coachHitterName}>{currentHitter.name}</Text>
-              <Text style={styles.coachHitterMeta}>
-                {currentHitter.position} / bats {currentHitter.bats} / count {diamondScoutMock.count}
-              </Text>
-            </View>
-            <View style={styles.mockBadgeSmall}>
-              <Text style={styles.mockBadgeSmallText}>MOCK</Text>
-            </View>
+    <View style={styles.callSurface}>
+      <View style={styles.callHeader}>
+        <View style={styles.callHeaderTop}>
+          <View style={styles.callHeaderMain}>
+            <Text style={styles.callOpponent} numberOfLines={1}>
+              {props.opponentName}
+            </Text>
+            <Text style={styles.callGameState} numberOfLines={1}>
+              {diamondScoutMock.score} | Room {props.code}
+            </Text>
           </View>
-          <Text style={styles.coachHitterPlan}>{currentHitter.plan}</Text>
-          <View style={styles.coachHitterRows}>
-            <View style={styles.coachHitterMini}>
-              <Text style={styles.coachHitterMiniLabel}>Chase</Text>
-              <Text style={styles.coachHitterMiniValue}>{currentHitter.chaseZone}</Text>
-            </View>
-            <View style={styles.coachHitterMini}>
-              <Text style={styles.coachHitterMiniLabel}>Damage</Text>
-              <Text style={styles.coachHitterMiniValue}>{currentHitter.damageZone}</Text>
-            </View>
-          </View>
-          <Pressable style={styles.coachHitterLink} onPress={props.openDiamondScout}>
-            <Text style={styles.coachHitterLinkText}>Open full scout card</Text>
+          <Pressable style={styles.gearButton} onPress={() => setSettingsOpen(true)} accessibilityLabel="Settings">
+            <Text style={styles.gearButtonText}>SET</Text>
           </Pressable>
         </View>
-
-        <Section title="Presets">
-          <View style={styles.gridFour}>
-            {presets.map((preset) => (
-              <Tile
-                key={preset.label}
-                label={preset.label}
-                onPress={() => props.sendPreset(preset.pitch, preset.location)}
-              />
-            ))}
+        <View style={styles.callStatusRow}>
+          <View style={styles.countChip}>
+            <Text style={styles.countChipText}>{diamondScoutMock.count}</Text>
           </View>
-        </Section>
-
-        <Section title="Pitch">
-          <View style={styles.gridThree}>
-            {pitches.map((pitch) => (
-              <Tile
-                key={pitch}
-                label={pitch}
-                selected={props.selectedPitch === pitch}
-                onPress={() => props.setSelectedPitch(props.selectedPitch === pitch ? "" : pitch)}
-              />
-            ))}
+          <View style={styles.pitchCountChip}>
+            <Text style={styles.pitchCountText}>PC 42</Text>
           </View>
-        </Section>
-
-        <Section title="Location">
-          <View style={styles.gridThree}>
-            {locations.map((location) => (
-              <Tile
-                key={location}
-                label={location}
-                selected={props.selectedLocation === location}
-                onPress={() => props.setSelectedLocation(props.selectedLocation === location ? "" : location)}
-              />
-            ))}
+          <View style={styles.scoutSwitch}>
+            <Text style={styles.scoutSwitchText}>Scout</Text>
+            <Switch
+              accessibilityLabel="Scout overlay"
+              disabled={!props.scoutAvailable}
+              onValueChange={props.onToggleScout}
+              thumbColor={scoutActive ? "#185fa5" : "#8d8a82"}
+              trackColor={{ false: "#e0ded7", true: "#a9c9e2" }}
+              value={scoutActive}
+            />
           </View>
-        </Section>
-
-        <Section title="Count / Context">
-          <View style={styles.gridFive}>
-            {contextButtons.map((context) => (
-              <Tile
-                compact
-                key={context}
-                label={context}
-                selected={props.selectedContext === context}
-                onPress={() => props.setSelectedContext(props.selectedContext === context ? "" : context)}
-              />
-            ))}
+          <View style={styles.surfaceMockBadge}>
+            <Text style={styles.surfaceMockBadgeText}>
+              {props.scoutingSource === "network" ? "LIVE DATA" : props.scoutingSource === "cache" ? "CACHE" : "MOCK DATA"}
+            </Text>
           </View>
-        </Section>
-      </ScrollView>
+          <View style={[styles.relayDot, props.lastStatus.includes("connected") && styles.relayDotOnline]} />
+        </View>
+      </View>
 
-      <View style={styles.actionBar}>
-        <Pressable style={styles.actionPrimary} onPress={props.onSend}>
-          <Text style={styles.actionText}>Send</Text>
-        </Pressable>
-        <Pressable style={styles.actionButton} onPress={props.onRepeat}>
-          <Text style={styles.actionText}>Repeat</Text>
-        </Pressable>
-        <Pressable style={styles.actionButton} onPress={props.onClear}>
-          <Text style={styles.actionText}>Clear</Text>
+      <Pressable
+        disabled={!scoutActive}
+        style={[styles.surfaceHitterCard, !scoutActive && styles.cleanHitterCard]}
+        onPress={() => setReportOpen(true)}
+      >
+        {scoutActive ? (
+          <>
+            <View style={styles.surfaceHitterLeft}>
+              <Text style={styles.surfaceEyebrow}>#{currentHitter.jersey} | Bats {currentHitter.bats}</Text>
+              <Text style={styles.surfaceHitterName} numberOfLines={1}>
+                {currentHitter.name}
+              </Text>
+              <Text style={styles.surfaceVerdict} numberOfLines={1}>
+                {currentHitter.verdict}
+              </Text>
+              <View style={styles.chipRow}>
+                {(filteredChips.length ? filteredChips : [{ text: "Pitch strengths", countBucket: "any" as const }]).map((chip) => (
+                  <View style={styles.attackChip} key={chip.text}>
+                    <Text style={styles.attackChipText}>{chip.text}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+            <View style={styles.surfaceSprayColumn}>
+              <SprayFan spray={currentHitter.spray} />
+              <Text style={styles.defenseCaption} numberOfLines={2}>
+                {currentHitter.defensiveNote}
+              </Text>
+            </View>
+          </>
+        ) : (
+          <View style={styles.surfaceHitterLeft}>
+            <Text style={styles.surfaceEyebrow}>#{currentHitter.jersey} | Bats {currentHitter.bats}</Text>
+            <Text style={styles.surfaceHitterName} numberOfLines={1}>
+              {currentHitter.name}
+            </Text>
+            <Text style={styles.cleanHitterMeta} numberOfLines={1}>
+              Next {props.onDeckHitter.name}
+            </Text>
+          </View>
+        )}
+      </Pressable>
+
+      <View style={styles.zoneHeader}>
+        <Text style={styles.zoneLegend}>{scoutActive ? "Blue dot = attack | Red X = avoid" : "Target zone"}</Text>
+        <Text style={styles.statusMini} numberOfLines={1}>
+          {props.scoutingMetaLabel} | {props.lastStatus}
+        </Text>
+      </View>
+      <View style={styles.zoneGrid}>
+        {zoneCells.map((cell, index) => (
+          <HeatZoneTile
+            key={cell.value}
+            label={cell.label}
+            expanded={!scoutActive}
+            selected={props.selectedLocation === cell.value}
+            tint={cell.tint}
+            recommended={scoutActive && currentHitter.recommendedZone === index + 1}
+            onPress={() => props.setSelectedLocation(props.selectedLocation === cell.value ? "" : cell.value)}
+          />
+        ))}
+      </View>
+
+      <View style={styles.sequenceStrip}>
+        <Text style={styles.sequenceText} numberOfLines={1}>
+          {sequenceLabel || "No pitches this at-bat"}
+        </Text>
+      </View>
+
+      <View style={styles.pitchRow}>
+        {pitchOptions.map((pitch) => (
+          <PitchOption
+            key={pitch}
+            label={pitch}
+            selected={props.selectedPitch === pitch}
+            recommended={scoutActive && currentHitter.recommendedPitch === pitch}
+            onPress={() => props.setSelectedPitch(props.selectedPitch === pitch ? "" : pitch)}
+          />
+        ))}
+      </View>
+
+      <View style={[styles.sendMicRow, props.isTalking && styles.sendMicRowLive]}>
+        <Pressable
+          disabled={!canSend || props.sendState === "sending"}
+          onPress={props.onSend}
+          style={[
+            styles.surfaceSendButton,
+            canSend && styles.surfaceSendButtonReady,
+            props.sendState === "sent" && styles.surfaceSendButtonSent,
+            props.sendState === "failed" && styles.surfaceSendButtonFailed,
+            props.isTalking && styles.surfaceSendButtonLive
+          ]}
+        >
+          <Text style={styles.surfaceSendText} numberOfLines={1}>
+            {props.sendState === "sending" ? "Sending..." : props.sendState === "sent" ? "Sent" : sendLabel}
+          </Text>
         </Pressable>
         <Pressable
+          accessibilityLabel="Hold to talk"
           onPressIn={props.onStartTalk}
           onPressOut={props.onStopTalk}
-          style={[styles.talkButton, props.isTalking && styles.talkButtonActive]}
+          style={[styles.surfaceMicButton, props.isTalking && styles.surfaceMicButtonLive]}
         >
-          <Text style={styles.actionText}>{props.isTalking ? "Talking" : "Hold Talk"}</Text>
+          <Text style={styles.surfaceMicIcon}>{props.isTalking ? "LIVE" : "MIC"}</Text>
         </Pressable>
       </View>
 
-      <Pressable style={styles.footerLink} onPress={props.onReset}>
-        <Text style={styles.footerLinkText}>Leave room</Text>
-      </Pressable>
+      <View style={styles.utilityRow}>
+        <Pressable style={styles.utilityButton} onPress={props.onRepeat}>
+          <Text style={styles.utilityText}>Repeat</Text>
+        </Pressable>
+        <Pressable style={styles.utilityButton} onPress={props.onAdvanceHitter}>
+          <Text style={styles.utilityText} numberOfLines={1}>
+            Next: {props.onDeckHitter.name}
+          </Text>
+        </Pressable>
+        <Pressable style={styles.utilityButton} onPress={props.onRefreshScouting}>
+          <Text style={styles.utilityText}>Refresh</Text>
+        </Pressable>
+        <Pressable style={styles.utilityButton} onPress={props.onClear}>
+          <Text style={styles.utilityText}>Clear</Text>
+        </Pressable>
+      </View>
+
+      <Modal animationType="slide" transparent visible={reportOpen} onRequestClose={() => setReportOpen(false)}>
+        <View style={styles.reportSheetBackdrop}>
+          <View style={styles.reportSheet}>
+            <View style={styles.reportSheetHeader}>
+              <View style={styles.flex}>
+                <Text style={styles.surfaceEyebrow}>Full scout report</Text>
+                <Text style={styles.surfaceHitterName} numberOfLines={1}>
+                  {currentHitter.name}
+                </Text>
+              </View>
+              <Pressable style={styles.reportCloseButton} onPress={() => setReportOpen(false)}>
+                <Text style={styles.utilityText}>Done</Text>
+              </Pressable>
+            </View>
+            <ScoutPlanCard hitter={currentHitter} />
+            <View style={styles.scoutGrid}>
+              <View style={styles.scoutMiniCard}>
+                <Text style={styles.scoutMiniTitle}>Spray</Text>
+                <Text style={styles.scoutListMeta}>{spraySummaryText(currentHitter.spray)}</Text>
+              </View>
+              <View style={styles.scoutMiniCard}>
+                <Text style={styles.scoutMiniTitle}>Defense</Text>
+                <Text style={styles.scoutListMeta}>{currentHitter.defensiveNote}</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal animationType="slide" transparent visible={settingsOpen} onRequestClose={() => setSettingsOpen(false)}>
+        <View style={styles.settingsSheetBackdrop}>
+          <View style={styles.settingsSheet}>
+            <View style={styles.reportSheetHeader}>
+              <View style={styles.flex}>
+                <Text style={styles.surfaceEyebrow}>Settings</Text>
+                <Text style={styles.settingsTitle}>Pitch buttons</Text>
+              </View>
+              <Pressable style={styles.settingsCloseButton} onPress={() => setSettingsOpen(false)}>
+                <Text style={styles.settingsSecondaryText}>Done</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.settingsHelp}>
+              These buttons are the coach pitch row. Changes save on this device and apply immediately.
+            </Text>
+            <View style={styles.pitchEditorList}>
+              {pitchDraft.map((pitch, index) => (
+                <View style={styles.pitchEditorRow} key={`pitch-draft-${index}`}>
+                  <TextInput
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    onChangeText={(value) => updatePitchDraft(index, value)}
+                    placeholder={`Pitch ${index + 1}`}
+                    placeholderTextColor="#9c9a93"
+                    style={styles.pitchEditorInput}
+                    value={pitch}
+                  />
+                  <Pressable
+                    accessibilityLabel={`Remove pitch ${index + 1}`}
+                    disabled={pitchDraft.length <= 1}
+                    onPress={() => removePitchDraft(index)}
+                    style={[styles.pitchEditorRemove, pitchDraft.length <= 1 && styles.pitchEditorRemoveDisabled]}
+                  >
+                    <Text style={styles.pitchEditorRemoveText}>-</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+            <View style={styles.settingsActionRow}>
+              <Pressable disabled={pitchDraft.length >= 6} onPress={addPitchDraft} style={styles.settingsSecondaryButton}>
+                <Text style={styles.settingsSecondaryText}>Add Pitch</Text>
+              </Pressable>
+              <Pressable onPress={() => setPitchDraft(defaultPitchButtons)} style={styles.settingsSecondaryButton}>
+                <Text style={styles.settingsSecondaryText}>Defaults</Text>
+              </Pressable>
+            </View>
+            <Pressable onPress={savePitchDraft} style={styles.settingsPrimaryButton}>
+              <Text style={styles.settingsPrimaryText}>Save Pitch Buttons</Text>
+            </Pressable>
+            <Pressable onPress={props.onReset} style={styles.settingsDangerButton}>
+              <Text style={styles.settingsDangerText}>Exit Room</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
+}
+
+function SprayFan({ spray }: { spray: SprayPayload }) {
+  if (!spray) {
+    return (
+      <View style={[styles.reportFan, styles.sprayFanEmpty]}>
+        <Text style={styles.sprayEmptyText}>No spray</Text>
+      </View>
+    );
+  }
+
+  if (spray.bands === 1) {
+    return <ReportStyleFan directionOnly inner={spray.direction} outer={spray.direction} />;
+  }
+
+  return <ReportStyleFan inner={spray.infield} outer={spray.outfield} />;
+}
+
+function ReportStyleFan({
+  directionOnly,
+  inner,
+  outer
+}: {
+  directionOnly?: boolean;
+  inner: SprayDirection;
+  outer: SprayDirection;
+}) {
+  return (
+    <View style={styles.reportFan}>
+      <View style={styles.reportFanBackdrop} />
+      <View style={[styles.reportFoulLine, styles.reportFoulLineLeft]} />
+      <View style={[styles.reportFoulLine, styles.reportFoulLineRight]} />
+
+      <FanCell band="air" position="left" value={outer.pull} />
+      <FanCell band="air" position="middle" value={outer.center} />
+      <FanCell band="air" position="right" value={outer.oppo} />
+
+      {!directionOnly && (
+        <>
+          <FanCell band="gb" position="left" value={inner.pull} />
+          <FanCell band="gb" position="middle" value={inner.center} />
+          <FanCell band="gb" position="right" value={inner.oppo} />
+        </>
+      )}
+
+      <View style={styles.reportHomePlate} />
+    </View>
+  );
+}
+
+function FanCell({
+  band,
+  position,
+  value
+}: {
+  band: "air" | "gb";
+  position: "left" | "middle" | "right";
+  value: number;
+}) {
+  const bandStyle = band === "air" ? styles.reportFanAir : styles.reportFanGb;
+  const positionStyle =
+    band === "air"
+      ? position === "left"
+        ? styles.reportFanAirLeft
+        : position === "middle"
+          ? styles.reportFanAirMiddle
+          : styles.reportFanAirRight
+      : position === "left"
+        ? styles.reportFanGbLeft
+        : position === "middle"
+          ? styles.reportFanGbMiddle
+          : styles.reportFanGbRight;
+  return (
+    <View style={[styles.reportFanCell, bandStyle, positionStyle, { opacity: sprayOpacity(value) }]}>
+      <Text style={[styles.reportFanText, band === "gb" && styles.reportFanTextSmall]}>{value}%</Text>
+    </View>
+  );
+}
+
+function HeatZoneTile({
+  expanded,
+  label,
+  onPress,
+  recommended,
+  selected,
+  tint
+}: {
+  expanded?: boolean;
+  label: string;
+  onPress: () => void;
+  recommended?: boolean;
+  selected?: boolean;
+  tint: "hot" | "cold" | "none";
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={`Location ${label}${tint === "cold" ? ", attack" : tint === "hot" ? ", avoid" : ""}`}
+      onPress={onPress}
+      style={[
+        styles.heatTile,
+        expanded && styles.heatTileExpanded,
+        tint === "cold" && styles.heatTileCold,
+        tint === "hot" && styles.heatTileHot,
+        recommended && styles.heatTileRecommended,
+        selected && styles.heatTileSelected
+      ]}
+    >
+      <Text style={[styles.heatGlyph, tint === "hot" && styles.heatGlyphHot]}>
+        {tint === "cold" ? "●" : tint === "hot" ? "×" : ""}
+      </Text>
+      <Text style={styles.heatTileText} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function PitchOption({
+  label,
+  onPress,
+  recommended,
+  selected
+}: {
+  label: string;
+  onPress: () => void;
+  recommended?: boolean;
+  selected?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.pitchPill, recommended && styles.pitchPillRecommended, selected && styles.pitchPillSelected]}
+    >
+      <Text style={[styles.pitchPillText, selected && styles.pitchPillTextSelected]} numberOfLines={1}>
+        {recommended ? "★ " : ""}
+        {shortPitch(label)}
+      </Text>
+    </Pressable>
+  );
+}
+
+function countBucketForLabel(label: string): "early" | "two_strikes" | "any" {
+  const parts = label.split("-");
+  const strikes = Number(parts[1] ?? 0);
+  if (strikes >= 2) return "two_strikes";
+  if (label === "0-0" || label === "1-0" || label === "0-1") return "early";
+  return "any";
+}
+
+function shortPitch(pitch: string) {
+  const normalized = pitch.trim().toLowerCase();
+  if (normalized === "fastball") return "FB";
+  if (normalized === "curveball" || normalized === "curve") return "CB";
+  if (normalized === "change-up" || normalized === "changeup" || normalized === "change") return "CH";
+  if (normalized === "slider") return "SL";
+  if (normalized === "cutter" || normalized === "cut") return "CT";
+  if (normalized === "splitter" || normalized === "split") return "SP";
+  if (normalized === "sinker") return "SNK";
+  if (normalized === "two-seam" || normalized === "2-seam") return "2S";
+  const words = pitch.trim().split(/\s+/).filter(Boolean);
+  if (words.length > 1) return words.map((word) => word[0]).join("").slice(0, 4).toUpperCase();
+  return pitch.length > 7 ? pitch.slice(0, 7) : pitch;
+}
+
+function sprayOpacity(value: number) {
+  return 0.32 + Math.min(0.68, Math.max(0, value) / 100);
 }
 
 function CatcherScreen(props: {
@@ -1576,17 +2539,24 @@ function CatcherScreen(props: {
 function DiamondScoutScreen(props: {
   apiBaseUrl: string;
   bearerToken: string;
+  cacheOnly: boolean;
   mockMode: boolean;
   onBack: () => void;
+  opponentId: string;
+  scoutingCache: ScoutingCache;
+  scoutingMetrics: ScoutingLoadMetrics;
+  onRefreshScouting: () => void;
   setApiBaseUrl: (value: string) => void;
   setBearerToken: (value: string) => void;
+  setCacheOnly: (value: boolean) => void;
   setMockMode: (value: boolean) => void;
+  setOpponentId: (value: string) => void;
 }) {
   const [view, setView] = useState<DiamondScoutView>("home");
-  const [selectedHitterId, setSelectedHitterId] = useState(diamondScoutMock.currentHitterId);
-  const currentHitter =
-    diamondScoutMockHitters.find((hitter) => hitter.id === diamondScoutMock.currentHitterId) ?? diamondScoutMockHitters[0];
-  const selectedHitter = diamondScoutMockHitters.find((hitter) => hitter.id === selectedHitterId) ?? currentHitter;
+  const hitters = props.scoutingCache.hitters.length ? props.scoutingCache.hitters : diamondScoutMockHitters;
+  const [selectedHitterId, setSelectedHitterId] = useState(hitters[0]?.id ?? diamondScoutMock.currentHitterId);
+  const currentHitter = hitters[0] ?? diamondScoutMockHitters[0];
+  const selectedHitter = hitters.find((hitter) => hitter.id === selectedHitterId) ?? currentHitter;
 
   const goToHitter = (hitterId: string) => {
     setSelectedHitterId(hitterId);
@@ -1635,7 +2605,7 @@ function DiamondScoutScreen(props: {
           </View>
           <Section title="Lineup Cards">
             <View style={styles.scoutGrid}>
-              {diamondScoutMockHitters.map((hitter) => (
+              {hitters.map((hitter) => (
                 <Pressable key={hitter.id} style={styles.scoutMiniCard} onPress={() => goToHitter(hitter.id)}>
                   <Text style={styles.scoutMiniTitle}>{hitter.name}</Text>
                   <Text style={styles.scoutListMeta}>
@@ -1710,7 +2680,14 @@ function DiamondScoutScreen(props: {
           <View style={styles.scoutCard}>
             <Text style={styles.scoutCardLabel}>Integration Config</Text>
             <Text style={styles.scoutCardText}>
-              Mock mode is used automatically when the API base URL or Bearer token is empty.
+              Mock mode is used automatically when the API base URL, Bearer token, or opponent id is empty.
+            </Text>
+            <Text style={styles.scoutCardText}>
+              Source: {props.scoutingCache.source.toUpperCase()} / cached hitters {props.scoutingCache.hitters.length}
+            </Text>
+            <Text style={styles.scoutCardText}>
+              Cold {props.scoutingMetrics.lastColdLoadMs ?? "-"}ms / warm {props.scoutingMetrics.lastWarmLoadMs ?? "-"}ms /
+              refresh {props.scoutingMetrics.lastRefreshMs ?? "-"}ms
             </Text>
           </View>
           <Text style={styles.label}>Diamond Scout API Base URL</Text>
@@ -1723,6 +2700,16 @@ function DiamondScoutScreen(props: {
             placeholderTextColor="#72806e"
             style={styles.input}
             value={props.apiBaseUrl}
+          />
+          <Text style={styles.label}>Opponent ID</Text>
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={props.setOpponentId}
+            placeholder="70"
+            placeholderTextColor="#72806e"
+            style={styles.input}
+            value={props.opponentId}
           />
           <Text style={styles.label}>Bearer Token</Text>
           <TextInput
@@ -1743,6 +2730,18 @@ function DiamondScoutScreen(props: {
               {props.mockMode ? "Mock Mode On" : "Mock Mode Off"}
             </Text>
           </Pressable>
+          <Pressable
+            style={[styles.toggleButton, props.cacheOnly && styles.toggleButtonActive]}
+            onPress={() => props.setCacheOnly(!props.cacheOnly)}
+          >
+            <Text style={[styles.toggleButtonText, props.cacheOnly && styles.toggleButtonTextActive]}>
+              {props.cacheOnly ? "Cache Only On" : "Cache Only Off"}
+            </Text>
+          </Pressable>
+          <Pressable style={styles.secondaryButton} onPress={props.onRefreshScouting}>
+            <Text style={styles.secondaryButtonText}>Refresh Scouting</Text>
+            <Text style={styles.buttonSubtext}>Fetch live or hydrate cache</Text>
+          </Pressable>
         </>
       );
     }
@@ -1753,7 +2752,10 @@ function DiamondScoutScreen(props: {
           <Text style={styles.scoutCardLabel}>Session</Text>
           <Text style={styles.scoutHeroName}>{diamondScoutMock.session}</Text>
           <Text style={styles.scoutCardText}>
-            {diamondScoutMock.tenant} / opponent {diamondScoutMock.opponent}
+            {diamondScoutMock.tenant} / opponent {props.scoutingCache.opponentName}
+          </Text>
+          <Text style={styles.scoutCardText}>
+            Source: {props.scoutingCache.source.toUpperCase()} / hitters {hitters.length}
           </Text>
         </View>
         <View style={styles.scoutGrid}>
@@ -2003,10 +3005,94 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginTop: 4
   },
+  attackChip: {
+    backgroundColor: "#e8f3ff",
+    borderRadius: 13,
+    borderWidth: 0,
+    minHeight: 28,
+    justifyContent: "center",
+    paddingHorizontal: 12
+  },
+  attackChipText: {
+    color: "#15598f",
+    fontSize: 13,
+    fontWeight: "600"
+  },
+  callGameState: {
+    color: "#6f6c65",
+    fontSize: 16,
+    fontWeight: "500",
+    lineHeight: 20
+  },
+  callHeader: {
+    gap: 8,
+    minHeight: 74
+  },
+  callHeaderMain: {
+    flex: 1
+  },
+  callHeaderTop: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10
+  },
+  callOpponent: {
+    color: "#1f1f1b",
+    fontSize: 24,
+    fontWeight: "900",
+    lineHeight: 29
+  },
+  callStatusRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 6,
+    minHeight: 38
+  },
+  callSurface: {
+    backgroundColor: "#fffefb",
+    borderColor: "#c9c6bc",
+    borderRadius: 28,
+    borderWidth: 1,
+    flex: 1,
+    gap: 8,
+    margin: 6,
+    padding: 10,
+    paddingBottom: 12
+  },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6
+  },
+  cleanHitterCard: {
+    minHeight: 72
+  },
+  cleanHitterMeta: {
+    color: "#6f6c65",
+    fontSize: 13,
+    fontWeight: "500",
+    lineHeight: 17
+  },
   content: {
     gap: 16,
     padding: 16,
     paddingBottom: 28
+  },
+  countChip: {
+    alignItems: "center",
+    backgroundColor: "#f1f0ea",
+    borderRadius: 10,
+    borderWidth: 0,
+    height: 38,
+    minWidth: 66,
+    justifyContent: "center",
+    paddingHorizontal: 14
+  },
+  countChipText: {
+    color: "#1f1f1b",
+    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
+    fontSize: 20,
+    fontWeight: "900"
   },
   coachHitterCard: {
     backgroundColor: "#142119",
@@ -2147,6 +3233,28 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "800"
   },
+  defenseCaption: {
+    color: "#15598f",
+    fontSize: 12,
+    fontWeight: "500",
+    lineHeight: 15,
+    textAlign: "center"
+  },
+  gearButton: {
+    alignItems: "center",
+    backgroundColor: "#fffefb",
+    borderColor: "#c9c6bc",
+    borderRadius: 10,
+    borderWidth: 1,
+    height: 40,
+    justifyContent: "center",
+    width: 44
+  },
+  gearButtonText: {
+    color: "#1f1f1b",
+    fontSize: 11,
+    fontWeight: "900"
+  },
   gridFive: {
     flexDirection: "row",
     gap: 6
@@ -2176,10 +3284,64 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     lineHeight: 21
   },
+  heatGlyph: {
+    color: "#15598f",
+    fontSize: 22,
+    fontWeight: "900",
+    height: 24,
+    lineHeight: 24
+  },
+  heatGlyphHot: {
+    color: "#b42a3a"
+  },
+  heatTile: {
+    alignItems: "center",
+    backgroundColor: "#fffefb",
+    borderColor: "#c9c6bc",
+    borderRadius: 10,
+    borderWidth: 1,
+    flexBasis: "31.9%",
+    gap: 0,
+    minHeight: 60,
+    justifyContent: "center",
+    paddingHorizontal: 5
+  },
+  heatTileExpanded: {
+    minHeight: 70
+  },
+  heatTileCold: {
+    backgroundColor: "#e2effb",
+    borderColor: "#c6d4de"
+  },
+  heatTileHot: {
+    backgroundColor: "#f8e6e6",
+    borderColor: "#d8c1c1"
+  },
+  heatTileRecommended: {
+    borderColor: "#1f68a9"
+  },
+  heatTileSelected: {
+    borderColor: "#1f68a9",
+    borderWidth: 3
+  },
+  heatTileText: {
+    color: "#1f1f1b",
+    fontSize: 12,
+    fontWeight: "700",
+    textAlign: "center"
+  },
   hiddenRtcView: {
     height: 1,
     opacity: 0,
     width: 1
+  },
+  homePlate: {
+    alignSelf: "center",
+    backgroundColor: "#1f1f1b",
+    height: 5,
+    marginTop: 2,
+    transform: [{ rotate: "45deg" }],
+    width: 5
   },
   input: {
     backgroundColor: "#101912",
@@ -2261,7 +3423,7 @@ const styles = StyleSheet.create({
     letterSpacing: 5
   },
   safe: {
-    backgroundColor: "#0b100d",
+    backgroundColor: "#eeece4",
     flex: 1
   },
   mockBadge: {
@@ -2290,6 +3452,251 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "900"
   },
+  pitchPill: {
+    alignItems: "center",
+    backgroundColor: "#fffefb",
+    borderColor: "#c9c6bc",
+    borderRadius: 10,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 56,
+    minWidth: 72,
+    justifyContent: "center",
+    paddingHorizontal: 8
+  },
+  pitchCountChip: {
+    alignItems: "center",
+    backgroundColor: "#f1f0ea",
+    borderRadius: 10,
+    height: 38,
+    justifyContent: "center",
+    minWidth: 64,
+    paddingHorizontal: 10
+  },
+  pitchCountText: {
+    color: "#1f1f1b",
+    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
+    fontSize: 16,
+    fontWeight: "900"
+  },
+  pitchEditorInput: {
+    backgroundColor: "#fffefb",
+    borderColor: "#c9c6bc",
+    borderRadius: 10,
+    borderWidth: 1,
+    color: "#1f1f1b",
+    flex: 1,
+    fontSize: 18,
+    fontWeight: "800",
+    minHeight: 48,
+    paddingHorizontal: 12
+  },
+  pitchEditorList: {
+    gap: 8
+  },
+  pitchEditorRemove: {
+    alignItems: "center",
+    backgroundColor: "#f8e6e6",
+    borderColor: "#d8c1c1",
+    borderRadius: 10,
+    borderWidth: 1,
+    height: 48,
+    justifyContent: "center",
+    width: 48
+  },
+  pitchEditorRemoveDisabled: {
+    opacity: 0.4
+  },
+  pitchEditorRemoveText: {
+    color: "#b42a3a",
+    fontSize: 24,
+    fontWeight: "900"
+  },
+  pitchEditorRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8
+  },
+  pitchPillRecommended: {
+    borderColor: "#1f68a9",
+    borderWidth: 2
+  },
+  pitchPillSelected: {
+    backgroundColor: "#e2effb",
+    borderColor: "#c6d4de"
+  },
+  pitchPillText: {
+    color: "#1f1f1b",
+    fontSize: 21,
+    fontWeight: "900"
+  },
+  pitchPillTextSelected: {
+    color: "#15598f"
+  },
+  pitchRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7
+  },
+  relayDot: {
+    backgroundColor: "#7f312f",
+    borderRadius: 8,
+    borderWidth: 0,
+    height: 16,
+    width: 16
+  },
+  relayDotOnline: {
+    backgroundColor: "#2f7413"
+  },
+  reportCloseButton: {
+    alignItems: "center",
+    backgroundColor: "#101912",
+    borderColor: "#314133",
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 38,
+    justifyContent: "center",
+    paddingHorizontal: 14
+  },
+  reportSheet: {
+    backgroundColor: "#0f1712",
+    borderColor: "#314133",
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 12,
+    maxHeight: "72%",
+    padding: 14
+  },
+  reportSheetBackdrop: {
+    backgroundColor: "rgba(0,0,0,0.55)",
+    flex: 1,
+    justifyContent: "flex-end",
+    padding: 12
+  },
+  reportSheetHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12
+  },
+  reportFan: {
+    height: 108,
+    overflow: "hidden",
+    position: "relative",
+    width: 132
+  },
+  reportFanAir: {
+    backgroundColor: "#16314f"
+  },
+  reportFanAirLeft: {
+    borderBottomRightRadius: 26,
+    borderTopLeftRadius: 72,
+    height: 55,
+    left: 0,
+    top: 17,
+    transform: [{ rotate: "-18deg" }],
+    width: 52
+  },
+  reportFanAirMiddle: {
+    borderTopLeftRadius: 48,
+    borderTopRightRadius: 48,
+    height: 62,
+    left: 42,
+    top: 5,
+    width: 48
+  },
+  reportFanAirRight: {
+    borderBottomLeftRadius: 26,
+    borderTopRightRadius: 72,
+    height: 55,
+    right: 0,
+    top: 17,
+    transform: [{ rotate: "18deg" }],
+    width: 52
+  },
+  reportFanBackdrop: {
+    backgroundColor: "#fbf9f3",
+    borderColor: "#b9b1a0",
+    borderRadius: 86,
+    borderWidth: 1,
+    bottom: 6,
+    left: 2,
+    position: "absolute",
+    right: 2,
+    top: 0
+  },
+  reportFanCell: {
+    alignItems: "center",
+    borderColor: "#fbf9f3",
+    borderWidth: 1,
+    justifyContent: "center",
+    position: "absolute"
+  },
+  reportFanGb: {
+    backgroundColor: "#9a6b12"
+  },
+  reportFanGbLeft: {
+    borderBottomRightRadius: 16,
+    borderTopLeftRadius: 34,
+    height: 34,
+    left: 38,
+    top: 63,
+    transform: [{ rotate: "-16deg" }],
+    width: 34
+  },
+  reportFanGbMiddle: {
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    height: 38,
+    left: 54,
+    top: 57,
+    width: 28
+  },
+  reportFanGbRight: {
+    borderBottomLeftRadius: 16,
+    borderTopRightRadius: 34,
+    height: 34,
+    right: 38,
+    top: 63,
+    transform: [{ rotate: "16deg" }],
+    width: 34
+  },
+  reportFanText: {
+    color: "#1a2230",
+    fontSize: 10,
+    fontWeight: "900",
+    textShadowColor: "#fbf9f3",
+    textShadowOffset: { height: 0, width: 0 },
+    textShadowRadius: 2
+  },
+  reportFanTextSmall: {
+    fontSize: 9
+  },
+  reportFoulLine: {
+    backgroundColor: "#b9b1a0",
+    height: 1,
+    position: "absolute",
+    top: 78,
+    width: 84,
+    zIndex: 4
+  },
+  reportFoulLineLeft: {
+    left: 0,
+    transform: [{ rotate: "43deg" }]
+  },
+  reportFoulLineRight: {
+    right: 0,
+    transform: [{ rotate: "-43deg" }]
+  },
+  reportHomePlate: {
+    backgroundColor: "#1a2230",
+    borderRadius: 4,
+    bottom: 6,
+    height: 6,
+    left: 63,
+    position: "absolute",
+    width: 6,
+    zIndex: 5
+  },
   screenTitle: {
     color: "#f6f1dc",
     fontSize: 34,
@@ -2308,6 +3715,19 @@ const styles = StyleSheet.create({
     color: "#f6f1dc",
     fontSize: 22,
     fontWeight: "900"
+  },
+  sendMicRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    minHeight: 64
+  },
+  sendMicRowLive: {
+    backgroundColor: "#260d0d",
+    borderColor: "#a83232",
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 5
   },
   scoutCard: {
     backgroundColor: "#17231c",
@@ -2391,6 +3811,297 @@ const styles = StyleSheet.create({
     color: "#f6f1dc",
     fontSize: 17,
     fontWeight: "900",
+    lineHeight: 22
+  },
+  scoutSwitch: {
+    alignItems: "center",
+    backgroundColor: "#fffefb",
+    borderColor: "#c9c6bc",
+    borderRadius: 10,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 4,
+    height: 38,
+    paddingLeft: 7,
+    paddingRight: 2
+  },
+  scoutSwitchText: {
+    color: "#6f6c65",
+    fontSize: 11,
+    fontWeight: "900"
+  },
+  sequenceStrip: {
+    alignItems: "center",
+    backgroundColor: "#f1f0ea",
+    borderColor: "#d7d3ca",
+    borderRadius: 10,
+    borderWidth: 1,
+    minHeight: 30,
+    justifyContent: "center",
+    paddingHorizontal: 10
+  },
+  sequenceText: {
+    color: "#4d4a44",
+    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
+    fontSize: 12,
+    fontWeight: "800"
+  },
+  settingsActionRow: {
+    flexDirection: "row",
+    gap: 8
+  },
+  settingsCloseButton: {
+    alignItems: "center",
+    backgroundColor: "#fffefb",
+    borderColor: "#c9c6bc",
+    borderRadius: 10,
+    borderWidth: 1,
+    minHeight: 38,
+    justifyContent: "center",
+    paddingHorizontal: 14
+  },
+  settingsDangerButton: {
+    alignItems: "center",
+    backgroundColor: "#f8e6e6",
+    borderColor: "#d8c1c1",
+    borderRadius: 10,
+    borderWidth: 1,
+    minHeight: 48,
+    justifyContent: "center"
+  },
+  settingsDangerText: {
+    color: "#b42a3a",
+    fontSize: 15,
+    fontWeight: "900"
+  },
+  settingsHelp: {
+    color: "#6f6c65",
+    fontSize: 14,
+    fontWeight: "600",
+    lineHeight: 20
+  },
+  settingsPrimaryButton: {
+    alignItems: "center",
+    backgroundColor: "#1f68a9",
+    borderRadius: 10,
+    minHeight: 52,
+    justifyContent: "center"
+  },
+  settingsPrimaryText: {
+    color: "#f6f1dc",
+    fontSize: 16,
+    fontWeight: "900"
+  },
+  settingsSecondaryButton: {
+    alignItems: "center",
+    backgroundColor: "#fffefb",
+    borderColor: "#c9c6bc",
+    borderRadius: 10,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 46,
+    justifyContent: "center"
+  },
+  settingsSecondaryText: {
+    color: "#1f1f1b",
+    fontSize: 14,
+    fontWeight: "900"
+  },
+  settingsSheet: {
+    backgroundColor: "#f3f1ec",
+    borderColor: "#c9c6bc",
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 12,
+    maxHeight: "78%",
+    padding: 14
+  },
+  settingsSheetBackdrop: {
+    backgroundColor: "rgba(31,31,27,0.38)",
+    flex: 1,
+    justifyContent: "flex-end",
+    padding: 12
+  },
+  settingsTitle: {
+    color: "#1f1f1b",
+    fontSize: 24,
+    fontWeight: "900",
+    lineHeight: 29
+  },
+  sprayCenter: {
+    backgroundColor: "#86bee8"
+  },
+  sprayDirectionBand: {
+    borderTopLeftRadius: 52,
+    borderTopRightRadius: 52,
+    flexDirection: "row",
+    gap: 2,
+    height: 58,
+    overflow: "hidden"
+  },
+  sprayEmptyText: {
+    color: "#6f6c65",
+    fontSize: 12,
+    fontWeight: "800"
+  },
+  sprayFan: {
+    alignItems: "stretch",
+    height: 78,
+    justifyContent: "flex-end",
+    width: 124
+  },
+  sprayFanEmpty: {
+    alignItems: "center",
+    backgroundColor: "#eeece4",
+    borderColor: "#d7d3ca",
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: "center"
+  },
+  sprayInfieldBand: {
+    alignSelf: "center",
+    borderTopColor: "#fffefb",
+    borderTopWidth: 2,
+    flexDirection: "row",
+    gap: 2,
+    height: 28,
+    overflow: "hidden",
+    width: 84
+  },
+  sprayOppo: {
+    backgroundColor: "#c8d9e5"
+  },
+  sprayOutfieldBand: {
+    borderTopLeftRadius: 62,
+    borderTopRightRadius: 62,
+    flexDirection: "row",
+    gap: 2,
+    height: 42,
+    overflow: "hidden"
+  },
+  sprayPull: {
+    backgroundColor: "#66aee5"
+  },
+  sprayText: {
+    color: "#1f1f1b",
+    fontSize: 10,
+    fontWeight: "900"
+  },
+  sprayTextSmall: {
+    fontSize: 9
+  },
+  sprayWedge: {
+    alignItems: "center",
+    borderColor: "rgba(255,254,251,0.55)",
+    borderWidth: 0.5,
+    flex: 1,
+    justifyContent: "center"
+  },
+  sprayWedgeSmall: {
+    minWidth: 0
+  },
+  statusMini: {
+    color: "#6f6c65",
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "500",
+    textAlign: "right"
+  },
+  surfaceEyebrow: {
+    color: "#6f6c65",
+    fontSize: 14,
+    fontWeight: "500"
+  },
+  surfaceHitterCard: {
+    alignItems: "stretch",
+    backgroundColor: "#f3f1ec",
+    borderRadius: 14,
+    borderWidth: 0,
+    flexDirection: "row",
+    gap: 10,
+    minHeight: 120,
+    padding: 12
+  },
+  surfaceHitterLeft: {
+    flex: 1,
+    gap: 5,
+    justifyContent: "center"
+  },
+  surfaceHitterName: {
+    color: "#1f1f1b",
+    fontSize: 23,
+    fontWeight: "900",
+    lineHeight: 28
+  },
+  surfaceMicButton: {
+    alignItems: "center",
+    backgroundColor: "#fffefb",
+    borderColor: "#c9c6bc",
+    borderRadius: 10,
+    borderWidth: 1,
+    height: 64,
+    justifyContent: "center",
+    width: 64
+  },
+  surfaceMicButtonLive: {
+    backgroundColor: "#b42a3a",
+    borderColor: "#b42a3a"
+  },
+  surfaceMicIcon: {
+    color: "#1f1f1b",
+    fontSize: 15,
+    fontWeight: "900"
+  },
+  surfaceMockBadge: {
+    alignItems: "center",
+    backgroundColor: "#f1f0ea",
+    borderRadius: 10,
+    height: 32,
+    justifyContent: "center",
+    paddingHorizontal: 7
+  },
+  surfaceMockBadgeText: {
+    color: "#6f6c65",
+    fontSize: 9,
+    fontWeight: "900"
+  },
+  surfaceSendButton: {
+    alignItems: "center",
+    backgroundColor: "#a9c9e2",
+    borderRadius: 10,
+    borderWidth: 0,
+    flex: 1,
+    height: 64,
+    justifyContent: "center",
+    paddingHorizontal: 12
+  },
+  surfaceSendButtonFailed: {
+    backgroundColor: "#b42a3a"
+  },
+  surfaceSendButtonLive: {
+    backgroundColor: "#b42a3a"
+  },
+  surfaceSendButtonReady: {
+    backgroundColor: "#1f68a9"
+  },
+  surfaceSendButtonSent: {
+    backgroundColor: "#35770b"
+  },
+  surfaceSendText: {
+    color: "#f6f1dc",
+    fontSize: 18,
+    fontWeight: "900"
+  },
+  surfaceSprayColumn: {
+    alignItems: "center",
+    gap: 4,
+    justifyContent: "center",
+    width: 126
+  },
+  surfaceVerdict: {
+    color: "#6f6c65",
+    fontSize: 16,
+    fontWeight: "500",
     lineHeight: 22
   },
   secondaryButton: {
@@ -2572,6 +4283,25 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: "900"
   },
+  utilityButton: {
+    alignItems: "center",
+    backgroundColor: "#fffefb",
+    borderColor: "#c9c6bc",
+    borderRadius: 10,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 38,
+    justifyContent: "center"
+  },
+  utilityRow: {
+    flexDirection: "row",
+    gap: 8
+  },
+  utilityText: {
+    color: "#1f1f1b",
+    fontSize: 12,
+    fontWeight: "900"
+  },
   toggleButton: {
     alignItems: "center",
     backgroundColor: "#213026",
@@ -2597,5 +4327,21 @@ const styles = StyleSheet.create({
     color: "#f3b23f",
     fontSize: 14,
     fontWeight: "900"
+  },
+  zoneGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7
+  },
+  zoneHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    minHeight: 18
+  },
+  zoneLegend: {
+    color: "#9c9a93",
+    fontSize: 13,
+    fontWeight: "500"
   }
 });
