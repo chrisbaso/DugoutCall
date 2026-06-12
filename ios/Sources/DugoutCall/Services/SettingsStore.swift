@@ -27,6 +27,15 @@ public final class SettingsStore: ObservableObject {
     @Published public var localPitchHistoryEnabled: Bool {
         didSet { defaults.set(localPitchHistoryEnabled, forKey: Keys.localPitchHistoryEnabled) }
     }
+    @Published public var diamondScoutAPIBaseURL: String {
+        didSet { defaults.set(diamondScoutAPIBaseURL, forKey: Keys.diamondScoutAPIBaseURL) }
+    }
+    @Published public var diamondScoutBearerToken: String {
+        didSet { defaults.set(diamondScoutBearerToken, forKey: Keys.diamondScoutBearerToken) }
+    }
+    @Published public var diamondScoutMockMode: Bool {
+        didSet { defaults.set(diamondScoutMockMode, forKey: Keys.diamondScoutMockMode) }
+    }
     @Published public var presets: [PresetCall] {
         didSet {
             if let data = try? JSONEncoder().encode(presets) {
@@ -47,6 +56,9 @@ public final class SettingsStore: ObservableObject {
         mode = AppMode(rawValue: defaults.string(forKey: Keys.mode) ?? "") ?? .game
         confirmBeforeGameMode = defaults.object(forKey: Keys.confirmBeforeGameMode) as? Bool ?? true
         localPitchHistoryEnabled = defaults.object(forKey: Keys.localPitchHistoryEnabled) as? Bool ?? false
+        diamondScoutAPIBaseURL = defaults.string(forKey: Keys.diamondScoutAPIBaseURL) ?? ""
+        diamondScoutBearerToken = defaults.string(forKey: Keys.diamondScoutBearerToken) ?? ""
+        diamondScoutMockMode = defaults.object(forKey: Keys.diamondScoutMockMode) as? Bool ?? true
         if let data = defaults.data(forKey: Keys.presets),
            let decoded = try? JSONDecoder().decode([PresetCall].self, from: data) {
             presets = decoded
@@ -64,6 +76,9 @@ public final class SettingsStore: ObservableObject {
         static let mode = "mode"
         static let confirmBeforeGameMode = "confirmBeforeGameMode"
         static let localPitchHistoryEnabled = "localPitchHistoryEnabled"
+        static let diamondScoutAPIBaseURL = "diamondScoutAPIBaseURL"
+        static let diamondScoutBearerToken = "diamondScoutBearerToken"
+        static let diamondScoutMockMode = "diamondScoutMockMode"
         static let presets = "presets"
     }
 }

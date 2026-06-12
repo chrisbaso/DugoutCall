@@ -25,6 +25,19 @@ struct SettingsView: View {
                     Toggle("Local-only pitch history", isOn: $settings.localPitchHistoryEnabled)
                 }
 
+                Section("Diamond Scout Debug") {
+                    Toggle("Use mock Diamond Scout data", isOn: $settings.diamondScoutMockMode)
+                    TextField("API base URL", text: $settings.diamondScoutAPIBaseURL)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                    TextField("Bearer token", text: $settings.diamondScoutBearerToken)
+                        .textInputAutocapitalization(.never)
+                        .textContentType(.password)
+                    Text(diamondScoutModeText)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Speech") {
                     Slider(value: $settings.speechRate, in: 0.35...0.62) {
                         Text("Speech rate")
@@ -51,5 +64,16 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private var diamondScoutModeText: String {
+        let config = DiamondScoutConfig(
+            apiBaseURL: settings.diamondScoutAPIBaseURL,
+            bearerToken: settings.diamondScoutBearerToken,
+            forceMockMode: settings.diamondScoutMockMode
+        )
+        return config.usesMockData
+            ? "Diamond Scout will show MOCK DATA until mock mode is off and both API base URL and Bearer token are set."
+            : "Diamond Scout will call \(settings.diamondScoutAPIBaseURL)/api/v1 with Authorization: Bearer <token>."
     }
 }

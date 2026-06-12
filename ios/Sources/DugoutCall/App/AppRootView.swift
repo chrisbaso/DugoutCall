@@ -12,6 +12,7 @@ struct AppRootView: View {
     @State private var role: UserRole?
     @State private var room: Room?
     @State private var showSettings = false
+    @State private var showDiamondScout = false
 
     init() {
         let settings = SettingsStore()
@@ -33,7 +34,11 @@ struct AppRootView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let role, let room {
+                if showDiamondScout {
+                    DiamondScoutHomeView(settings: settings) {
+                        showDiamondScout = false
+                    }
+                } else if let role, let room {
                     switch role {
                     case .coach:
                         CoachDashboardView(
@@ -66,9 +71,14 @@ struct AppRootView: View {
                         room = Room(code: response.code, mode: response.mode, expiresAt: response.expiresAt, token: response.token)
                     }
                 } else {
-                    RoleSelectionView { selectedRole in
-                        role = selectedRole
-                    }
+                    RoleSelectionView(
+                        onSelect: { selectedRole in
+                            role = selectedRole
+                        },
+                        onDiamondScout: {
+                            showDiamondScout = true
+                        }
+                    )
                 }
             }
             .toolbar {
