@@ -135,6 +135,20 @@ Native field-use priorities:
 - AirPods must be paired to the catcher iPhone.
 - Live voice is one-way only in Game Mode.
 
+### Diamond Scout Integration
+
+The native SwiftUI app includes a Diamond Scout coach workflow with mock data fallback. From launch, tap `Diamond Scout` to open scouting screens without creating a DugoutCall room.
+
+Diamond Scout setup and simulator test steps are in `docs/DIAMOND_SCOUT_IOS_HANDOFF.md`. The API contract is in `docs/INTEGRATION_API.md`.
+
+Mock mode is used automatically when the Diamond Scout API base URL or Bearer token is empty. Open Settings, then `Diamond Scout Debug`, to edit:
+
+- Use mock Diamond Scout data.
+- API base URL.
+- Bearer token.
+
+Live mode calls the configured base URL under `/api/v1` with `Authorization: Bearer <token>`. The Diamond Scout server must implement the documented `/api/v1` endpoints before live mode can be fully tested.
+
 ## Game Mode
 
 Game Mode is the default and primary flow.

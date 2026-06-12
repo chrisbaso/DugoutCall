@@ -108,7 +108,9 @@ public final class DiamondScoutAPIClient: DiamondScoutClient {
         var url = baseURL
             .appendingPathComponent("api")
             .appendingPathComponent("v1")
-            .appendingPathComponent(path)
+        for component in path.split(separator: "/") {
+            url.appendPathComponent(String(component))
+        }
         if !query.isEmpty {
             var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
             components?.queryItems = query
