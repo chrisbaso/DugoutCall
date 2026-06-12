@@ -2098,7 +2098,7 @@ function CoachScreen(props: {
             </View>
             <View style={styles.surfaceSprayColumn}>
               <SprayFan spray={currentHitter.spray} />
-              <Text style={styles.defenseCaption} numberOfLines={2}>
+              <Text style={styles.defenseCaption} numberOfLines={1}>
                 {currentHitter.defensiveNote}
               </Text>
             </View>
@@ -2315,7 +2315,7 @@ function SprayFan({ spray }: { spray: SprayPayload }) {
         <View style={styles.shadeLanes}>
           {lanes.map((lane) => {
             const isDominant = lane.key === dominant.key;
-            const height = 18 + Math.round((lane.value / maxValue) * 32);
+            const height = 20 + Math.round((lane.value / maxValue) * 34);
             return (
               <View style={styles.shadeLane} key={lane.key}>
                 <View
@@ -3218,9 +3218,9 @@ const styles = StyleSheet.create({
   },
   defenseCaption: {
     color: "#15598f",
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: "500",
-    lineHeight: 15,
+    lineHeight: 12,
     textAlign: "center"
   },
   gearButton: {
@@ -3568,26 +3568,26 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     gap: 4,
-    minHeight: 104,
-    padding: 6,
-    width: 120
+    minHeight: 112,
+    padding: 7,
+    width: 128
   },
   shadeField: {
     backgroundColor: "#fbf9f3",
     borderColor: "#c9c2b5",
-    borderTopLeftRadius: 48,
-    borderTopRightRadius: 48,
+    borderTopLeftRadius: 52,
+    borderTopRightRadius: 52,
     borderWidth: 1,
-    height: 58,
+    height: 64,
     overflow: "hidden",
     position: "relative"
   },
   shadeFoulLine: {
     backgroundColor: "#c7c0b3",
-    bottom: 2,
+    bottom: 3,
     height: 1,
     position: "absolute",
-    width: 58,
+    width: 63,
     zIndex: 3
   },
   shadeFoulLineLeft: {
@@ -3605,12 +3605,12 @@ const styles = StyleSheet.create({
   },
   shadeHeaderSide: {
     color: "#1f68a9",
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "900"
   },
   shadeHeaderText: {
     color: "#736f66",
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: "900",
     letterSpacing: 0
   },
@@ -3635,7 +3635,7 @@ const styles = StyleSheet.create({
   },
   shadeLabelText: {
     color: "#8b867d",
-    fontSize: 8,
+    fontSize: 9,
     fontWeight: "800"
   },
   shadeLane: {
@@ -3648,7 +3648,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(26, 34, 48, 0.12)",
     borderRadius: 9,
     borderWidth: 1,
-    width: 22
+    width: 24
   },
   shadeLaneFillDominant: {
     backgroundColor: "#1f68a9",
@@ -3658,10 +3658,10 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     bottom: 9,
     flexDirection: "row",
-    gap: 5,
-    left: 9,
+    gap: 6,
+    left: 10,
     position: "absolute",
-    right: 9,
+    right: 10,
     top: 8,
     zIndex: 2
   },
@@ -3670,7 +3670,7 @@ const styles = StyleSheet.create({
   },
   shadeValueText: {
     color: "#1a2230",
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: "900"
   },
   screenTitle: {
@@ -4072,7 +4072,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
     justifyContent: "center",
-    width: 126
+    width: 132
   },
   surfaceVerdict: {
     color: "#6f6c65",
