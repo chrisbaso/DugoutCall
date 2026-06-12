@@ -6,6 +6,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   SafeAreaView,
@@ -119,18 +120,41 @@ type PresetCall = {
   location?: string;
 };
 
-type AppScreen = "role" | "coach" | "catcher" | "diamondScout";
-type DiamondScoutView = "home" | "opponents" | "games" | "gameDetail" | "currentHitter" | "hitterCard" | "debug";
+type AppScreen = "role" | "coach" | "catcher";
 
-type ScoutHitter = {
-  id: string;
-  name: string;
-  bats: string;
-  position: string;
-  plan: string;
-  chaseZone: string;
-  damageZone: string;
-  speed: string;
+type ScoutLineupStatus = "loading" | "loaded" | "unavailable";
+
+type ScoutZoneHeat = {
+  wedges: { location: string; value: number }[];
+  sampleSize: number;
+  lowSample: boolean;
+};
+
+type ScoutHitterSummary = {
+  slot: number;
+  hitterId: number;
+  displayName: string;
+  jersey: string;
+  bats: string | null;
+  verdict: string | null;
+  attackTags: string[];
+  zoneHeat: ScoutZoneHeat | null;
+};
+
+type ScoutCardDetail = {
+  tier: string;
+  confidence: string;
+  plan: string[];
+  quickStats: string[];
+  defense: string[];
+  running: string[];
+};
+
+type ScoutLineup = {
+  gameLabel: string;
+  gameId: number | null;
+  opponentId: number | null;
+  summaries: ScoutHitterSummary[];
 };
 
 const testTone = require("./assets/test-tone.wav");
@@ -155,55 +179,203 @@ const presets: PresetCall[] = [
   { label: "Pickoff 1B", pitch: "Pickoff" }
 ];
 
-const diamondScoutMockHitters: ScoutHitter[] = [
-  {
-    id: "h1",
-    name: "Mason Keller",
-    bats: "R",
-    position: "SS",
-    plan: "Start soft away. Fastballs must stay up or off the plate.",
-    chaseZone: "Slider down away",
-    damageZone: "Middle-in fastball",
-    speed: "Above average"
-  },
-  {
-    id: "h2",
-    name: "Eli Brooks",
-    bats: "L",
-    position: "CF",
-    plan: "Fastball up early, change-up down when ahead.",
-    chaseZone: "Change-up below zone",
-    damageZone: "Outer-half curveball",
-    speed: "Plus"
-  },
-  {
-    id: "h3",
-    name: "Noah Price",
-    bats: "R",
-    position: "1B",
-    plan: "Do not double up middle. Curveball for called strike.",
-    chaseZone: "Fastball above hands",
-    damageZone: "Down and in",
-    speed: "Limited"
-  }
-];
+// Mirrors the lineup-summaries contract in docs/INTEGRATION_API.md and the
+// native iOS mock client so both apps demo identical data.
+const mockScoutLineup: ScoutLineup = {
+  gameLabel: "Edina Hornets 14AAA",
+  gameId: 101,
+  opponentId: 70,
+  summaries: [
+    {
+      slot: 1,
+      hitterId: 4,
+      displayName: "#4 Isaiah Kelly",
+      jersey: "4",
+      bats: "R",
+      verdict: "Dead-red early in counts; chases low-away with two strikes.",
+      attackTags: ["Start soft", "Climb w/ 2K"],
+      zoneHeat: {
+        wedges: [
+          { location: "lf_line", value: 12 },
+          { location: "left_field", value: 33 },
+          { location: "center_field", value: 28 },
+          { location: "right_field", value: 18 },
+          { location: "rf_line", value: 9 }
+        ],
+        sampleSize: 18,
+        lowSample: false
+      }
+    },
+    {
+      slot: 2,
+      hitterId: 8,
+      displayName: "#8 Mason Strey",
+      jersey: "8",
+      bats: "L",
+      verdict: "Late trigger; vulnerable to velocity on the inner half.",
+      attackTags: ["Challenge in", "FB up", "No waste pitches"],
+      zoneHeat: {
+        wedges: [
+          { location: "lf_line", value: 8 },
+          { location: "left_field", value: 18 },
+          { location: "center_field", value: 30 },
+          { location: "right_field", value: 28 },
+          { location: "rf_line", value: 16 }
+        ],
+        sampleSize: 12,
+        lowSample: false
+      }
+    },
+    {
+      slot: 3,
+      hitterId: 12,
+      displayName: "#12 Nolan Price",
+      jersey: "12",
+      bats: "R",
+      verdict: "Bunt threat; slap contact to the left side.",
+      attackTags: ["Crash corners", "Stay low"],
+      zoneHeat: {
+        wedges: [
+          { location: "lf_line", value: 25 },
+          { location: "left_field", value: 35 },
+          { location: "center_field", value: 22 },
+          { location: "right_field", value: 12 },
+          { location: "rf_line", value: 6 }
+        ],
+        sampleSize: 9,
+        lowSample: true
+      }
+    },
+    {
+      slot: 4,
+      hitterId: 23,
+      displayName: "#23 Quinn Walsh",
+      jersey: "23",
+      bats: null,
+      verdict: null,
+      attackTags: [],
+      zoneHeat: null
+    }
+  ]
+};
 
-const diamondScoutMock = {
-  session: "Varsity Game Prep",
-  tenant: "Demo Dugout",
-  opponent: "Northview",
-  game: "Northview at DugoutCall",
-  date: "Today",
-  score: "Top 3rd, 1 out",
-  count: "1-2",
-  pitcher: "C. Baso",
-  currentHitterId: "h2",
-  opponents: ["Northview", "Riverside", "West County"],
-  games: ["Northview at DugoutCall", "DugoutCall at Riverside", "West County Tournament"],
-  events: ["FB away called strike", "Curve down swinging strike", "Change-up down groundout"]
+const mockScoutCards: Record<number, ScoutCardDetail> = {
+  4: {
+    tier: "Tier 1 - Handle with care",
+    confidence: "Good confidence / 70 PA",
+    plan: ["Attack the zone; do not give free bases.", "Pound away until he adjusts.", "Hold runners 1-0."],
+    quickStats: ["AVG .333 / OBP .421 / OPS .921", "K 14% / BB 11% / SB 5", "GB 40 / FB 35 / LD 20 / PU 5"],
+    defense: ["Infield: SS hole", "Outfield: CF shade", "GB L/C/R: 45 / 35 / 20", "Air L/C/R: 25 / 45 / 30"],
+    running: ["Speed +", "SB 5 / Bunt Y"]
+  },
+  8: {
+    tier: "Tier 2 - Pick your spots",
+    confidence: "Moderate confidence / 41 PA",
+    plan: ["Get ahead with velocity in.", "Expand up once ahead.", "No waste pitches."],
+    quickStats: ["AVG .271 / OBP .350 / OPS .744", "K 22% / BB 9% / SB 2", "GB 30 / FB 40 / LD 22 / PU 8"],
+    defense: ["Infield: Neutral", "Outfield: RF shade", "GB L/C/R: 22 / 38 / 40", "Air L/C/R: 18 / 40 / 42"],
+    running: ["Speed avg", "SB 2 / Bunt N"]
+  },
+  12: {
+    tier: "Tier 3 - Attack",
+    confidence: "Limited sample / 9 PA",
+    plan: ["Crash the corners on bunt shows.", "Stay low in the zone."],
+    quickStats: ["AVG .250 / OBP .333 / OPS .583", "K 11% / BB 11% / SB 3", "GB 60 / FB 10 / LD 25 / PU 5"],
+    defense: ["Infield: Corners in", "Outfield: Shallow LF", "GB L/C/R: 55 / 30 / 15", "Air L/C/R: 40 / 35 / 25"],
+    running: ["Speed +", "SB 3 / Bunt Y"]
+  }
 };
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/$/, "");
+
+const scoutHeaders = (token: string) => ({
+  Authorization: `Bearer ${token.trim()}`,
+  Accept: "application/json"
+});
+
+const parseScoutSummary = (raw: any): ScoutHitterSummary => ({
+  slot: Number(raw?.slot ?? 0),
+  hitterId: Number(raw?.hitter?.id ?? 0),
+  displayName: String(raw?.hitter?.display_name ?? ""),
+  jersey: String(raw?.hitter?.jersey ?? ""),
+  bats: raw?.hitter?.bats ?? null,
+  verdict: raw?.verdict ?? null,
+  attackTags: Array.isArray(raw?.attack_tags) ? raw.attack_tags.slice(0, 3).map(String) : [],
+  zoneHeat: raw?.zone_heat
+    ? {
+        wedges: Array.isArray(raw.zone_heat.wedges)
+          ? raw.zone_heat.wedges.map((wedge: any) => ({
+              location: String(wedge?.location ?? ""),
+              value: Number(wedge?.value ?? 0)
+            }))
+          : [],
+        sampleSize: Number(raw.zone_heat.sample_size ?? 0),
+        lowSample: Boolean(raw.zone_heat.low_sample)
+      }
+    : null
+});
+
+const fetchScoutLineup = async (baseUrl: string, token: string): Promise<ScoutLineup> => {
+  const base = normalizeBaseUrl(baseUrl);
+  const headers = scoutHeaders(token);
+  const gamesResponse = await fetch(`${base}/api/v1/games`, { headers });
+  if (!gamesResponse.ok) throw new Error(`Diamond Scout returned HTTP ${gamesResponse.status}`);
+  const gamesJson = await gamesResponse.json();
+  const games: any[] = Array.isArray(gamesJson?.games) ? gamesJson.games : [];
+  const game = games.find((entry) => entry?.status === "in_progress") ?? games[0];
+  if (!game) throw new Error("No Diamond Scout games visible");
+  const summariesResponse = await fetch(`${base}/api/v1/games/${game.id}/lineup-summaries`, { headers });
+  if (!summariesResponse.ok) throw new Error(`Diamond Scout returned HTTP ${summariesResponse.status}`);
+  const summariesJson = await summariesResponse.json();
+  const summaries: ScoutHitterSummary[] = (Array.isArray(summariesJson?.summaries) ? summariesJson.summaries : [])
+    .map(parseScoutSummary)
+    .sort((a: ScoutHitterSummary, b: ScoutHitterSummary) => a.slot - b.slot);
+  return {
+    gameLabel: String(game.opponent_name ?? "Opponent"),
+    gameId: Number(game.id),
+    opponentId: Number(summariesJson?.opponent_id ?? game.opponent_id ?? 0) || null,
+    summaries
+  };
+};
+
+const fetchScoutCard = async (
+  baseUrl: string,
+  token: string,
+  opponentId: number,
+  hitterId: number,
+  gameId: number | null
+): Promise<ScoutCardDetail> => {
+  const base = normalizeBaseUrl(baseUrl);
+  const query = gameId ? `?game_id=${gameId}` : "";
+  const response = await fetch(`${base}/api/v1/opponents/${opponentId}/hitters/${hitterId}/card${query}`, {
+    headers: scoutHeaders(token)
+  });
+  if (!response.ok) throw new Error(`Diamond Scout returned HTTP ${response.status}`);
+  const card = await response.json();
+  const stats = card?.quick_stats ?? {};
+  return {
+    tier: String(card?.tier?.label ?? ""),
+    confidence: [card?.confidence?.label, card?.confidence?.pa_sample ? `${card.confidence.pa_sample} PA` : ""]
+      .filter(Boolean)
+      .join(" / "),
+    plan: [card?.plan?.out_plan, card?.plan?.pitch_plan, card?.plan?.coach_note].filter(Boolean).map(String),
+    quickStats: [
+      `AVG ${stats.avg ?? "-"} / OBP ${stats.obp ?? "-"} / OPS ${stats.ops ?? "-"}`,
+      `K ${stats.k_pct ?? "-"} / BB ${stats.bb_pct ?? "-"} / SB ${stats.sb ?? "-"}`,
+      stats.contact ?? ""
+    ].filter(Boolean),
+    defense: [
+      `Infield: ${card?.defense?.if_call ?? "-"}`,
+      `Outfield: ${card?.defense?.of_call ?? "-"}`,
+      Array.isArray(card?.defense?.gb_lcr) ? `GB L/C/R: ${card.defense.gb_lcr.join(" / ")}` : "",
+      Array.isArray(card?.defense?.air_lcr) ? `Air L/C/R: ${card.defense.air_lcr.join(" / ")}` : ""
+    ].filter(Boolean),
+    running: [
+      `Speed ${card?.running?.speed ?? "-"}`,
+      `SB ${card?.running?.stolen_bases ?? 0} / Bunt ${card?.running?.bunt ?? "-"}`
+    ]
+  };
+};
 
 const websocketUrl = (baseUrl: string) => {
   const normalized = normalizeBaseUrl(baseUrl);
@@ -271,6 +443,11 @@ export default function App() {
   const [diamondScoutBaseUrl, setDiamondScoutBaseUrl] = useState("");
   const [diamondScoutToken, setDiamondScoutToken] = useState("");
   const [diamondScoutMockMode, setDiamondScoutMockMode] = useState(true);
+  const scoutCacheRef = useRef<ScoutLineup | null>(null);
+  const scoutLastRefreshRef = useRef(0);
+  const [scoutStatus, setScoutStatus] = useState<ScoutLineupStatus>("loading");
+  const [scoutLineup, setScoutLineup] = useState<ScoutLineup | null>(null);
+  const [scoutIndex, setScoutIndex] = useState(0);
   const [room, setRoom] = useState<RoomResponse | null>(null);
   const [joinCode, setJoinCode] = useState("");
   const [connection, setConnection] = useState<ConnectionState>("idle");
@@ -303,6 +480,73 @@ export default function App() {
   );
 
   const apiUrl = (path: string) => `${normalizeBaseUrl(backendUrl)}${path}`;
+
+  // Mock data serves whenever the toggle is on or live config is incomplete,
+  // matching the native iOS app's DiamondScoutConfig behavior.
+  const scoutMockActive =
+    diamondScoutMockMode || !diamondScoutBaseUrl.trim() || !diamondScoutToken.trim();
+
+  const loadScoutLineup = async () => {
+    if (scoutMockActive) {
+      scoutCacheRef.current = mockScoutLineup;
+      setScoutLineup(mockScoutLineup);
+      setScoutStatus("loaded");
+      return;
+    }
+    try {
+      const lineup = await fetchScoutLineup(diamondScoutBaseUrl, diamondScoutToken);
+      scoutCacheRef.current = lineup;
+      setScoutLineup(lineup);
+      setScoutStatus(lineup.summaries.length ? "loaded" : "unavailable");
+    } catch {
+      const cached = scoutCacheRef.current;
+      if (cached) {
+        setScoutLineup(cached);
+        setScoutStatus("loaded");
+      } else {
+        setScoutStatus("unavailable");
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (screen === "coach") {
+      setScoutStatus((current) => (scoutLineup ? current : "loading"));
+      void loadScoutLineup();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, scoutMockActive]);
+
+  const advanceScoutBatter = () => {
+    const count = scoutLineup?.summaries.length ?? 0;
+    if (!count) return;
+    setScoutIndex((index) => (index + 1) % count);
+    // One throttled batch refresh keeps the current and on-deck hitters fresh;
+    // failures fall back to the cached lineup silently.
+    const now = Date.now();
+    if (now - scoutLastRefreshRef.current >= 15000) {
+      scoutLastRefreshRef.current = now;
+      void loadScoutLineup();
+    }
+  };
+
+  const loadScoutCard = async (hitterId: number): Promise<ScoutCardDetail | null> => {
+    if (scoutMockActive) {
+      return mockScoutCards[hitterId] ?? null;
+    }
+    const lineup = scoutLineup ?? scoutCacheRef.current;
+    if (!lineup?.opponentId) return null;
+    try {
+      return await fetchScoutCard(diamondScoutBaseUrl, diamondScoutToken, lineup.opponentId, hitterId, lineup.gameId);
+    } catch {
+      return null;
+    }
+  };
+
+  const scoutSummaries = scoutLineup?.summaries ?? [];
+  const scoutCurrentSummary = scoutSummaries.length
+    ? scoutSummaries[scoutIndex % scoutSummaries.length]
+    : null;
 
   const updateVoiceDiagnostics = (patch: Partial<VoiceDiagnostics>) => {
     setVoiceDiagnostics((current) => ({ ...current, ...patch }));
@@ -1236,10 +1480,6 @@ export default function App() {
               <Text style={styles.primaryButtonText}>Coach Mode</Text>
               <Text style={styles.buttonSubtext}>Create room</Text>
             </Pressable>
-            <Pressable style={styles.scoutButton} onPress={() => setScreen("diamondScout")}>
-              <Text style={styles.scoutButtonText}>Diamond Scout</Text>
-              <Text style={styles.buttonSubtext}>Mock scouting cards</Text>
-            </Pressable>
             <Pressable
               style={styles.secondaryButton}
               onPress={() => {
@@ -1250,6 +1490,43 @@ export default function App() {
               <Text style={styles.secondaryButtonText}>Catcher Mode</Text>
               <Text style={styles.buttonSubtext}>Join with code</Text>
             </Pressable>
+
+            <Section title="Diamond Scout Debug">
+              <Text style={styles.helper}>
+                Hitter scouting shows on the coach call screen. Mock data is used until both fields are set and mock
+                mode is off.
+              </Text>
+              <Text style={styles.label}>Diamond Scout API Base URL</Text>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                onChangeText={setDiamondScoutBaseUrl}
+                placeholder="https://api.example.com"
+                placeholderTextColor="#72806e"
+                style={styles.input}
+                value={diamondScoutBaseUrl}
+              />
+              <Text style={styles.label}>Bearer Token</Text>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={setDiamondScoutToken}
+                placeholder="Paste token for live mode"
+                placeholderTextColor="#72806e"
+                secureTextEntry
+                style={styles.input}
+                value={diamondScoutToken}
+              />
+              <Pressable
+                style={[styles.toggleButton, diamondScoutMockMode && styles.toggleButtonActive]}
+                onPress={() => setDiamondScoutMockMode(!diamondScoutMockMode)}
+              >
+                <Text style={[styles.toggleButtonText, diamondScoutMockMode && styles.toggleButtonTextActive]}>
+                  {diamondScoutMockMode ? "Mock Mode On" : "Mock Mode Off"}
+                </Text>
+              </Pressable>
+            </Section>
           </ScrollView>
         )}
 
@@ -1283,18 +1560,12 @@ export default function App() {
             setSelectedLocation={setSelectedLocation}
             setSelectedPitch={setSelectedPitch}
             sendPreset={sendPitchCall}
-          />
-        )}
-
-        {screen === "diamondScout" && (
-          <DiamondScoutScreen
-            apiBaseUrl={diamondScoutBaseUrl}
-            bearerToken={diamondScoutToken}
-            mockMode={diamondScoutMockMode || !diamondScoutBaseUrl.trim() || !diamondScoutToken.trim()}
-            onBack={() => setScreen("role")}
-            setApiBaseUrl={setDiamondScoutBaseUrl}
-            setBearerToken={setDiamondScoutToken}
-            setMockMode={setDiamondScoutMockMode}
+            scoutStatus={scoutStatus}
+            scoutSummary={scoutCurrentSummary}
+            scoutGameLabel={scoutLineup?.gameLabel ?? ""}
+            scoutMock={scoutMockActive}
+            onNextBatter={advanceScoutBatter}
+            loadScoutCard={loadScoutCard}
           />
         )}
 
@@ -1353,7 +1624,15 @@ function CoachScreen(props: {
   isRunningDiagnostics: boolean;
   lastServerDiagnostics: string;
   onRunDiagnostics: () => void;
+  scoutStatus: ScoutLineupStatus;
+  scoutSummary: ScoutHitterSummary | null;
+  scoutGameLabel: string;
+  scoutMock: boolean;
+  onNextBatter: () => void;
+  loadScoutCard: (hitterId: number) => Promise<ScoutCardDetail | null>;
 }) {
+  const [reportHitter, setReportHitter] = useState<ScoutHitterSummary | null>(null);
+
   return (
     <View style={styles.flex}>
       <ScrollView contentContainerStyle={styles.dashboard}>
@@ -1362,6 +1641,16 @@ function CoachScreen(props: {
           <Text style={styles.roomCode}>{props.code}</Text>
           <Text style={styles.bannerMode}>Game Mode</Text>
         </View>
+
+        <HitterCard
+          status={props.scoutStatus}
+          summary={props.scoutSummary}
+          mock={props.scoutMock}
+          onNext={props.onNextBatter}
+          onOpen={() => {
+            if (props.scoutSummary) setReportHitter(props.scoutSummary);
+          }}
+        />
 
         <Text style={styles.selection}>{props.currentPhrase || "Select pitch and location"}</Text>
         <Text style={styles.statusLine}>{props.lastStatus}</Text>
@@ -1450,6 +1739,14 @@ function CoachScreen(props: {
       <Pressable style={styles.footerLink} onPress={props.onReset}>
         <Text style={styles.footerLinkText}>Leave room</Text>
       </Pressable>
+
+      <ScoutReportModal
+        gameLabel={props.scoutGameLabel}
+        hitter={reportHitter}
+        loadScoutCard={props.loadScoutCard}
+        mock={props.scoutMock}
+        onClose={() => setReportHitter(null)}
+      />
     </View>
   );
 }
@@ -1539,243 +1836,212 @@ function CatcherScreen(props: {
   );
 }
 
-function DiamondScoutScreen(props: {
-  apiBaseUrl: string;
-  bearerToken: string;
-  mockMode: boolean;
-  onBack: () => void;
-  setApiBaseUrl: (value: string) => void;
-  setBearerToken: (value: string) => void;
-  setMockMode: (value: boolean) => void;
+function HitterCard(props: {
+  status: ScoutLineupStatus;
+  summary: ScoutHitterSummary | null;
+  mock: boolean;
+  onNext: () => void;
+  onOpen: () => void;
 }) {
-  const [view, setView] = useState<DiamondScoutView>("home");
-  const [selectedHitterId, setSelectedHitterId] = useState(diamondScoutMock.currentHitterId);
-  const currentHitter =
-    diamondScoutMockHitters.find((hitter) => hitter.id === diamondScoutMock.currentHitterId) ?? diamondScoutMockHitters[0];
-  const selectedHitter = diamondScoutMockHitters.find((hitter) => hitter.id === selectedHitterId) ?? currentHitter;
-
-  const goToHitter = (hitterId: string) => {
-    setSelectedHitterId(hitterId);
-    setView("hitterCard");
-  };
-
-  const renderBody = () => {
-    if (view === "opponents") {
-      return (
-        <Section title="Opponents">
-          <View style={styles.scoutList}>
-            {diamondScoutMock.opponents.map((opponent) => (
-              <Pressable key={opponent} style={styles.scoutListItem} onPress={() => setView("games")}>
-                <Text style={styles.scoutListTitle}>{opponent}</Text>
-                <Text style={styles.scoutListMeta}>Tap to view scheduled games</Text>
-              </Pressable>
-            ))}
-          </View>
-        </Section>
-      );
-    }
-
-    if (view === "games") {
-      return (
-        <Section title="Games">
-          <View style={styles.scoutList}>
-            {diamondScoutMock.games.map((game) => (
-              <Pressable key={game} style={styles.scoutListItem} onPress={() => setView("gameDetail")}>
-                <Text style={styles.scoutListTitle}>{game}</Text>
-                <Text style={styles.scoutListMeta}>{diamondScoutMock.date}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </Section>
-      );
-    }
-
-    if (view === "gameDetail") {
-      return (
-        <>
-          <View style={styles.scoutCard}>
-            <Text style={styles.scoutCardLabel}>Game State</Text>
-            <Text style={styles.scoutCardTitle}>{diamondScoutMock.game}</Text>
-            <Text style={styles.scoutCardText}>{diamondScoutMock.score}</Text>
-            <Text style={styles.scoutCardText}>Pitcher: {diamondScoutMock.pitcher}</Text>
-          </View>
-          <Section title="Lineup Cards">
-            <View style={styles.scoutGrid}>
-              {diamondScoutMockHitters.map((hitter) => (
-                <Pressable key={hitter.id} style={styles.scoutMiniCard} onPress={() => goToHitter(hitter.id)}>
-                  <Text style={styles.scoutMiniTitle}>{hitter.name}</Text>
-                  <Text style={styles.scoutListMeta}>
-                    {hitter.position} / bats {hitter.bats}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </Section>
-          <Pressable style={styles.secondaryButton} onPress={() => setView("currentHitter")}>
-            <Text style={styles.secondaryButtonText}>Current Hitter</Text>
-            <Text style={styles.buttonSubtext}>{currentHitter.name}</Text>
-          </Pressable>
-          <View style={styles.scoutCard}>
-            <Text style={styles.scoutCardLabel}>Sample Pitch Events</Text>
-            {diamondScoutMock.events.map((event) => (
-              <Text key={event} style={styles.scoutCardText}>
-                {event}
-              </Text>
-            ))}
-          </View>
-        </>
-      );
-    }
-
-    if (view === "currentHitter") {
-      return (
-        <>
-          <View style={styles.scoutCard}>
-            <Text style={styles.scoutCardLabel}>Current Hitter</Text>
-            <Text style={styles.scoutHeroName}>{currentHitter.name}</Text>
-            <Text style={styles.scoutCardText}>
-              {currentHitter.position} / bats {currentHitter.bats} / count {diamondScoutMock.count}
-            </Text>
-          </View>
-          <ScoutPlanCard hitter={currentHitter} />
-          <Pressable style={styles.primaryButton} onPress={() => goToHitter(currentHitter.id)}>
-            <Text style={styles.primaryButtonText}>Open Full Card</Text>
-          </Pressable>
-        </>
-      );
-    }
-
-    if (view === "hitterCard") {
-      return (
-        <>
-          <View style={styles.scoutCard}>
-            <Text style={styles.scoutCardLabel}>Hitter Card</Text>
-            <Text style={styles.scoutHeroName}>{selectedHitter.name}</Text>
-            <Text style={styles.scoutCardText}>
-              {selectedHitter.position} / bats {selectedHitter.bats}
-            </Text>
-          </View>
-          <ScoutPlanCard hitter={selectedHitter} />
-          <View style={styles.scoutGrid}>
-            <View style={styles.scoutMiniCard}>
-              <Text style={styles.scoutMiniTitle}>Running</Text>
-              <Text style={styles.scoutListMeta}>{selectedHitter.speed}</Text>
-            </View>
-            <View style={styles.scoutMiniCard}>
-              <Text style={styles.scoutMiniTitle}>Defense</Text>
-              <Text style={styles.scoutListMeta}>Shift neutral. Hold middle in late counts.</Text>
-            </View>
-          </View>
-        </>
-      );
-    }
-
-    if (view === "debug") {
-      return (
-        <>
-          <View style={styles.scoutCard}>
-            <Text style={styles.scoutCardLabel}>Integration Config</Text>
-            <Text style={styles.scoutCardText}>
-              Mock mode is used automatically when the API base URL or Bearer token is empty.
-            </Text>
-          </View>
-          <Text style={styles.label}>Diamond Scout API Base URL</Text>
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            onChangeText={props.setApiBaseUrl}
-            placeholder="https://api.example.com"
-            placeholderTextColor="#72806e"
-            style={styles.input}
-            value={props.apiBaseUrl}
-          />
-          <Text style={styles.label}>Bearer Token</Text>
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
-            onChangeText={props.setBearerToken}
-            placeholder="Paste token for live mode"
-            placeholderTextColor="#72806e"
-            secureTextEntry
-            style={styles.input}
-            value={props.bearerToken}
-          />
-          <Pressable
-            style={[styles.toggleButton, props.mockMode && styles.toggleButtonActive]}
-            onPress={() => props.setMockMode(!props.mockMode)}
-          >
-            <Text style={[styles.toggleButtonText, props.mockMode && styles.toggleButtonTextActive]}>
-              {props.mockMode ? "Mock Mode On" : "Mock Mode Off"}
-            </Text>
-          </Pressable>
-        </>
-      );
-    }
-
+  if (props.status === "loading") {
     return (
-      <>
-        <View style={styles.scoutCard}>
-          <Text style={styles.scoutCardLabel}>Session</Text>
-          <Text style={styles.scoutHeroName}>{diamondScoutMock.session}</Text>
-          <Text style={styles.scoutCardText}>
-            {diamondScoutMock.tenant} / opponent {diamondScoutMock.opponent}
-          </Text>
-        </View>
-        <View style={styles.scoutGrid}>
-          <ScoutNavButton label="Opponents" detail="Scouting list" onPress={() => setView("opponents")} />
-          <ScoutNavButton label="Games" detail="Schedule and state" onPress={() => setView("games")} />
-          <ScoutNavButton label="Current Hitter" detail={currentHitter.name} onPress={() => setView("currentHitter")} />
-          <ScoutNavButton label="Debug Config" detail="API and token" onPress={() => setView("debug")} />
-        </View>
-      </>
-    );
-  };
-
-  return (
-    <ScrollView contentContainerStyle={styles.content}>
-      <View style={styles.scoutHeader}>
-        <View style={styles.flex}>
-          <Text style={styles.screenTitle}>Diamond Scout</Text>
-          <Text style={styles.helper}>Mock data is available without the Diamond Scout backend.</Text>
-        </View>
-        <View style={styles.mockBadge}>
-          <Text style={styles.mockBadgeText}>{props.mockMode ? "MOCK DATA" : "LIVE"}</Text>
+      <View style={styles.hitterCard}>
+        <View style={styles.hitterCardBody}>
+          <View style={[styles.skeletonLine, styles.skeletonLineWide]} />
+          <View style={[styles.skeletonLine, styles.skeletonLineNarrow]} />
+          <View style={styles.hitterTags}>
+            <View style={styles.skeletonChip} />
+            <View style={styles.skeletonChip} />
+          </View>
         </View>
       </View>
+    );
+  }
 
-      {view !== "home" ? (
-        <Pressable style={styles.footerLink} onPress={() => setView("home")}>
-          <Text style={styles.footerLinkText}>Back to Scout Home</Text>
-        </Pressable>
-      ) : null}
+  const summary = props.summary;
+  if (props.status === "unavailable" || !summary) {
+    return (
+      <View style={styles.hitterCard}>
+        <View style={styles.hitterCardBody}>
+          <Text style={styles.hitterNoData}>No scouting data</Text>
+          <Text style={styles.hitterMeta}>Pitch calling unaffected</Text>
+        </View>
+      </View>
+    );
+  }
 
-      {renderBody()}
-
-      <Pressable style={styles.footerLink} onPress={props.onBack}>
-        <Text style={styles.footerLinkText}>Back to DugoutCall</Text>
+  return (
+    <View style={styles.hitterCard}>
+      <Pressable
+        accessibilityLabel={`Open full scouting report for ${summary.displayName}`}
+        style={[styles.hitterCardBody, styles.hitterCardTappable]}
+        onPress={props.onOpen}
+      >
+        <View style={styles.flex}>
+          <Text numberOfLines={1} style={styles.hitterName}>
+            {summary.displayName}
+            {summary.bats ? ` \u00b7 Bats ${summary.bats}` : ""}
+          </Text>
+          {summary.verdict || summary.attackTags.length ? (
+            <>
+              <Text numberOfLines={1} style={styles.hitterVerdict}>
+                {summary.verdict ?? "No verdict on file"}
+              </Text>
+              <View style={styles.hitterTags}>
+                {summary.attackTags.slice(0, 3).map((tag) => (
+                  <View key={tag} style={styles.hitterTag}>
+                    <Text style={styles.hitterTagText}>{tag}</Text>
+                  </View>
+                ))}
+              </View>
+            </>
+          ) : (
+            <Text style={styles.hitterNoData}>No scouting data</Text>
+          )}
+        </View>
+        {summary.zoneHeat ? <HeatBars heat={summary.zoneHeat} /> : null}
       </Pressable>
-    </ScrollView>
-  );
-}
-
-function ScoutNavButton({ detail, label, onPress }: { detail: string; label: string; onPress: () => void }) {
-  return (
-    <Pressable style={styles.scoutMiniCard} onPress={onPress}>
-      <Text style={styles.scoutMiniTitle}>{label}</Text>
-      <Text style={styles.scoutListMeta}>{detail}</Text>
-    </Pressable>
-  );
-}
-
-function ScoutPlanCard({ hitter }: { hitter: ScoutHitter }) {
-  return (
-    <View style={styles.scoutCard}>
-      <Text style={styles.scoutCardLabel}>Plan</Text>
-      <Text style={styles.scoutCardTitle}>{hitter.plan}</Text>
-      <Text style={styles.scoutCardText}>Chase: {hitter.chaseZone}</Text>
-      <Text style={styles.scoutCardText}>Damage: {hitter.damageZone}</Text>
+      <Pressable accessibilityLabel="Next batter" style={styles.hitterNextButton} onPress={props.onNext}>
+        <Text style={styles.hitterNextText}>Next</Text>
+      </Pressable>
+      {props.mock ? (
+        <View style={styles.hitterMockBadge}>
+          <Text style={styles.mockBadgeText}>MOCK DATA</Text>
+        </View>
+      ) : null}
     </View>
+  );
+}
+
+function HeatBars({ heat }: { heat: ScoutZoneHeat }) {
+  const max = Math.max(...heat.wedges.map((wedge) => wedge.value), 1);
+  return (
+    <View style={styles.heatWrap}>
+      <View style={styles.heatBars}>
+        {heat.wedges.map((wedge) => {
+          const intensity = wedge.value / max;
+          return (
+            <View
+              key={wedge.location}
+              style={[styles.heatBar, { height: 8 + 34 * intensity, opacity: 0.35 + 0.65 * intensity }]}
+            />
+          );
+        })}
+      </View>
+      <Text style={styles.heatCaption}>{heat.lowSample ? "L-R spray (low n)" : "L-R spray"}</Text>
+    </View>
+  );
+}
+
+function ScoutReportModal(props: {
+  gameLabel: string;
+  hitter: ScoutHitterSummary | null;
+  loadScoutCard: (hitterId: number) => Promise<ScoutCardDetail | null>;
+  mock: boolean;
+  onClose: () => void;
+}) {
+  const [card, setCard] = useState<ScoutCardDetail | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const hitterId = props.hitter?.hitterId ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    setCard(null);
+    setLoaded(false);
+    if (hitterId == null) return;
+    props
+      .loadScoutCard(hitterId)
+      .then((detail) => {
+        if (!cancelled) {
+          setCard(detail);
+          setLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hitterId]);
+
+  return (
+    <Modal animationType="slide" visible={Boolean(props.hitter)} onRequestClose={props.onClose}>
+      <SafeAreaView style={styles.safe}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.scoutHeader}>
+            <View style={styles.flex}>
+              <Text style={styles.screenTitle}>{props.hitter?.displayName ?? "Hitter Card"}</Text>
+              <Text style={styles.helper}>{props.gameLabel}</Text>
+            </View>
+            {props.mock ? (
+              <View style={styles.mockBadge}>
+                <Text style={styles.mockBadgeText}>MOCK DATA</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {props.hitter?.zoneHeat ? <HeatBars heat={props.hitter.zoneHeat} /> : null}
+
+          {card ? (
+            <>
+              <View style={styles.scoutCard}>
+                <Text style={styles.scoutCardLabel}>Profile</Text>
+                <Text style={styles.scoutCardTitle}>{card.tier}</Text>
+                <Text style={styles.scoutCardText}>{card.confidence}</Text>
+                {props.hitter?.verdict ? <Text style={styles.scoutCardText}>{props.hitter.verdict}</Text> : null}
+              </View>
+              <View style={styles.scoutCard}>
+                <Text style={styles.scoutCardLabel}>Plan</Text>
+                {card.plan.map((line) => (
+                  <Text key={line} style={styles.scoutCardText}>
+                    {line}
+                  </Text>
+                ))}
+              </View>
+              <View style={styles.scoutCard}>
+                <Text style={styles.scoutCardLabel}>Quick Stats</Text>
+                {card.quickStats.map((line) => (
+                  <Text key={line} style={styles.scoutCardText}>
+                    {line}
+                  </Text>
+                ))}
+              </View>
+              <View style={styles.scoutCard}>
+                <Text style={styles.scoutCardLabel}>Defense</Text>
+                {card.defense.map((line) => (
+                  <Text key={line} style={styles.scoutCardText}>
+                    {line}
+                  </Text>
+                ))}
+              </View>
+              <View style={styles.scoutCard}>
+                <Text style={styles.scoutCardLabel}>Running</Text>
+                {card.running.map((line) => (
+                  <Text key={line} style={styles.scoutCardText}>
+                    {line}
+                  </Text>
+                ))}
+              </View>
+            </>
+          ) : (
+            <View style={styles.scoutCard}>
+              <Text style={styles.scoutCardLabel}>{loaded ? "No scouting data" : "Loading"}</Text>
+              <Text style={styles.scoutCardText}>
+                {loaded
+                  ? "No full report is available for this hitter."
+                  : "Fetching the full scouting report."}
+              </Text>
+            </View>
+          )}
+
+          <Pressable style={styles.primaryButton} onPress={props.onClose}>
+            <Text style={styles.primaryButtonText}>Done</Text>
+          </Pressable>
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -1979,6 +2245,123 @@ const styles = StyleSheet.create({
     padding: 12,
     paddingBottom: 18
   },
+  heatBar: {
+    backgroundColor: "#f3b23f",
+    borderRadius: 2,
+    width: 10
+  },
+  heatBars: {
+    alignItems: "flex-end",
+    flexDirection: "row",
+    gap: 4,
+    height: 44
+  },
+  heatCaption: {
+    color: "#a8b8a5",
+    fontSize: 9,
+    fontWeight: "800",
+    marginTop: 3
+  },
+  heatWrap: {
+    alignItems: "center"
+  },
+  hitterCard: {
+    backgroundColor: "#17231c",
+    borderColor: "#324437",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    minHeight: 104,
+    overflow: "hidden"
+  },
+  hitterCardBody: {
+    flex: 1,
+    gap: 5,
+    justifyContent: "center",
+    padding: 12
+  },
+  hitterCardTappable: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12
+  },
+  hitterMeta: {
+    color: "#a8b8a5",
+    fontSize: 12,
+    fontWeight: "700"
+  },
+  hitterMockBadge: {
+    backgroundColor: "#f3b23f",
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    position: "absolute",
+    right: 62,
+    top: 6
+  },
+  hitterName: {
+    color: "#f6f1dc",
+    fontSize: 16,
+    fontWeight: "900"
+  },
+  hitterNextButton: {
+    alignItems: "center",
+    backgroundColor: "#213026",
+    borderLeftColor: "#3b4f3f",
+    borderLeftWidth: 1,
+    justifyContent: "center",
+    width: 54
+  },
+  hitterNextText: {
+    color: "#f6f1dc",
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  hitterNoData: {
+    color: "#a8b8a5",
+    fontSize: 15,
+    fontWeight: "800"
+  },
+  hitterTag: {
+    backgroundColor: "#213026",
+    borderColor: "#3b4f3f",
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3
+  },
+  hitterTags: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6
+  },
+  hitterTagText: {
+    color: "#f6f1dc",
+    fontSize: 11,
+    fontWeight: "900"
+  },
+  hitterVerdict: {
+    color: "#c9d2c6",
+    fontSize: 13,
+    fontWeight: "700"
+  },
+  skeletonChip: {
+    backgroundColor: "#223028",
+    borderRadius: 999,
+    height: 20,
+    width: 64
+  },
+  skeletonLine: {
+    backgroundColor: "#223028",
+    borderRadius: 4,
+    height: 13
+  },
+  skeletonLineNarrow: {
+    width: 210
+  },
+  skeletonLineWide: {
+    width: 150
+  },
   dangerButton: {
     alignItems: "center",
     backgroundColor: "#441d1d",
@@ -2169,20 +2552,6 @@ const styles = StyleSheet.create({
     fontSize: 34,
     fontWeight: "900"
   },
-  scoutButton: {
-    backgroundColor: "#203822",
-    borderColor: "#4d7d44",
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 72,
-    justifyContent: "center",
-    paddingHorizontal: 18
-  },
-  scoutButtonText: {
-    color: "#f6f1dc",
-    fontSize: 22,
-    fontWeight: "900"
-  },
   scoutCard: {
     backgroundColor: "#17231c",
     borderColor: "#324437",
@@ -2209,63 +2578,11 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     lineHeight: 26
   },
-  scoutGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10
-  },
   scoutHeader: {
     alignItems: "flex-start",
     flexDirection: "row",
     gap: 12,
     justifyContent: "space-between"
-  },
-  scoutHeroName: {
-    color: "#f6f1dc",
-    fontSize: 30,
-    fontWeight: "900",
-    lineHeight: 36
-  },
-  scoutList: {
-    gap: 10
-  },
-  scoutListItem: {
-    backgroundColor: "#17231c",
-    borderColor: "#324437",
-    borderRadius: 8,
-    borderWidth: 1,
-    gap: 5,
-    minHeight: 68,
-    justifyContent: "center",
-    padding: 14
-  },
-  scoutListMeta: {
-    color: "#a8b8a5",
-    fontSize: 13,
-    fontWeight: "800",
-    lineHeight: 18
-  },
-  scoutListTitle: {
-    color: "#f6f1dc",
-    fontSize: 19,
-    fontWeight: "900"
-  },
-  scoutMiniCard: {
-    backgroundColor: "#17231c",
-    borderColor: "#324437",
-    borderRadius: 8,
-    borderWidth: 1,
-    flexBasis: "48%",
-    gap: 6,
-    minHeight: 92,
-    justifyContent: "center",
-    padding: 12
-  },
-  scoutMiniTitle: {
-    color: "#f6f1dc",
-    fontSize: 17,
-    fontWeight: "900",
-    lineHeight: 22
   },
   secondaryButton: {
     backgroundColor: "#17231c",
