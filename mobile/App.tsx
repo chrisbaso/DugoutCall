@@ -1275,6 +1275,7 @@ export default function App() {
             onSend={() => sendPitchCall(selectedPitch, selectedLocation)}
             onStartTalk={startTalk}
             onStopTalk={stopTalk}
+            openDiamondScout={() => setScreen("diamondScout")}
             lastNetworkEvent={lastNetworkEvent}
             selectedContext={selectedContext}
             selectedLocation={selectedLocation}
@@ -1340,6 +1341,7 @@ function CoachScreen(props: {
   onSend: () => void;
   onStartTalk: () => void;
   onStopTalk: () => void;
+  openDiamondScout: () => void;
   selectedContext: string;
   selectedLocation: string;
   selectedPitch: string;
@@ -1354,6 +1356,9 @@ function CoachScreen(props: {
   lastServerDiagnostics: string;
   onRunDiagnostics: () => void;
 }) {
+  const currentHitter =
+    diamondScoutMockHitters.find((hitter) => hitter.id === diamondScoutMock.currentHitterId) ?? diamondScoutMockHitters[0];
+
   return (
     <View style={styles.flex}>
       <ScrollView contentContainerStyle={styles.dashboard}>
@@ -1374,6 +1379,35 @@ function CoachScreen(props: {
           lastServerDiagnostics={props.lastServerDiagnostics}
           onRun={props.onRunDiagnostics}
         />
+
+        <View style={styles.coachHitterCard}>
+          <View style={styles.coachHitterHeader}>
+            <View style={styles.flex}>
+              <Text style={styles.coachHitterLabel}>Current Hitter</Text>
+              <Text style={styles.coachHitterName}>{currentHitter.name}</Text>
+              <Text style={styles.coachHitterMeta}>
+                {currentHitter.position} / bats {currentHitter.bats} / count {diamondScoutMock.count}
+              </Text>
+            </View>
+            <View style={styles.mockBadgeSmall}>
+              <Text style={styles.mockBadgeSmallText}>MOCK</Text>
+            </View>
+          </View>
+          <Text style={styles.coachHitterPlan}>{currentHitter.plan}</Text>
+          <View style={styles.coachHitterRows}>
+            <View style={styles.coachHitterMini}>
+              <Text style={styles.coachHitterMiniLabel}>Chase</Text>
+              <Text style={styles.coachHitterMiniValue}>{currentHitter.chaseZone}</Text>
+            </View>
+            <View style={styles.coachHitterMini}>
+              <Text style={styles.coachHitterMiniLabel}>Damage</Text>
+              <Text style={styles.coachHitterMiniValue}>{currentHitter.damageZone}</Text>
+            </View>
+          </View>
+          <Pressable style={styles.coachHitterLink} onPress={props.openDiamondScout}>
+            <Text style={styles.coachHitterLinkText}>Open full scout card</Text>
+          </Pressable>
+        </View>
 
         <Section title="Presets">
           <View style={styles.gridFour}>
@@ -1974,6 +2008,85 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 28
   },
+  coachHitterCard: {
+    backgroundColor: "#142119",
+    borderColor: "#41633f",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 10,
+    padding: 12
+  },
+  coachHitterHeader: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 10,
+    justifyContent: "space-between"
+  },
+  coachHitterLabel: {
+    color: "#f3b23f",
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase"
+  },
+  coachHitterLink: {
+    alignItems: "center",
+    backgroundColor: "#223229",
+    borderColor: "#3f5f46",
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 42,
+    justifyContent: "center"
+  },
+  coachHitterLinkText: {
+    color: "#f6f1dc",
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  coachHitterMeta: {
+    color: "#a8b8a5",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 2
+  },
+  coachHitterMini: {
+    backgroundColor: "#101912",
+    borderColor: "#314133",
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    gap: 3,
+    minHeight: 56,
+    justifyContent: "center",
+    padding: 8
+  },
+  coachHitterMiniLabel: {
+    color: "#a8b8a5",
+    fontSize: 10,
+    fontWeight: "900",
+    textTransform: "uppercase"
+  },
+  coachHitterMiniValue: {
+    color: "#f6f1dc",
+    fontSize: 13,
+    fontWeight: "900",
+    lineHeight: 17
+  },
+  coachHitterName: {
+    color: "#f6f1dc",
+    fontSize: 22,
+    fontWeight: "900",
+    lineHeight: 27
+  },
+  coachHitterPlan: {
+    color: "#d1dacd",
+    fontSize: 14,
+    fontWeight: "800",
+    lineHeight: 19
+  },
+  coachHitterRows: {
+    flexDirection: "row",
+    gap: 8
+  },
   dashboard: {
     gap: 14,
     padding: 12,
@@ -2162,6 +2275,19 @@ const styles = StyleSheet.create({
   mockBadgeText: {
     color: "#151208",
     fontSize: 12,
+    fontWeight: "900"
+  },
+  mockBadgeSmall: {
+    alignItems: "center",
+    backgroundColor: "#f3b23f",
+    borderRadius: 8,
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 6
+  },
+  mockBadgeSmallText: {
+    color: "#151208",
+    fontSize: 10,
     fontWeight: "900"
   },
   screenTitle: {
