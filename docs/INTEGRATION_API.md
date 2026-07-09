@@ -620,6 +620,94 @@ Mapping:
 - If lineup is missing, fall back to the first hitter returned by the existing
   dugout hitter order.
 
+### GET `/api/v1/games/{game_id}/lineup-summaries`
+
+Returns compact scouting summaries for every hitter in the game's lineup in a
+single response. This is the batch read behind DugoutCall's ambient in-game
+hitter card: the client calls it once at game start, caches the whole lineup
+for the game session, and re-calls it opportunistically mid-game (one request
+serves as both the current-hitter refresh and the on-deck prefetch on spotty
+field LTE).
+
+Response:
+
+```json
+{
+  "game_id": 101,
+  "opponent_id": 70,
+  "summaries": [
+    {
+      "slot": 1,
+      "hitter": {
+        "id": 4,
+        "name": "Isaiah Kelly",
+        "display_name": "#4 Isaiah Kelly",
+        "jersey": "4",
+        "bats": "R"
+      },
+      "verdict": "Dead-red early in counts; chases low-away with two strikes.",
+      "attack_tags": ["Start soft", "Climb w/ 2K"],
+      "zone_heat": {
+        "kind": "field_fan",
+        "wedges": [
+          { "location": "lf_line", "value": 12 },
+          { "location": "left_field", "value": 33 },
+          { "location": "center_field", "value": 28 },
+          { "location": "right_field", "value": 18 },
+          { "location": "rf_line", "value": 9 }
+        ],
+        "sample_size": 18,
+        "low_sample": false
+      }
+    },
+    {
+      "slot": 4,
+      "hitter": {
+        "id": 23,
+        "name": "Quinn Walsh",
+        "display_name": "#23 Quinn Walsh",
+        "jersey": "23",
+        "bats": null
+      },
+      "verdict": null,
+      "attack_tags": [],
+      "zone_heat": null
+    }
+  ]
+}
+```
+
+Field rules:
+
+- `game_id` must belong to the token tenant; cross-tenant access returns `404`.
+- `summaries` contains one entry per lineup slot, ordered by `slot`. If the
+  game has no stored lineup, fall back to the existing dugout hitter order.
+- `verdict` is one single-sentence display string from the existing report
+  layer, suitable for one-line truncation on a phone.
+- `attack_tags` are short display strings derived from existing plan and chip
+  values (`PocketCardEdit`, `report_design`). The server caps the array at 3
+  entries; it never pads or fabricates tags.
+- `zone_heat` is JSON zone values, chosen over SVG so mobile clients render it
+  natively without an SVG dependency. `kind` is `field_fan`. `wedges` are
+  ordered left to right from the catcher's view; `location` uses the canonical
+  Field Locations enum values; `value` is an integer 0-100 share of charted
+  balls in play. `sample_size` and `low_sample` come from the existing
+  shrinkage/confidence layer.
+- A hitter with no charted data returns `verdict: null`, `attack_tags: []`,
+  and `zone_heat: null`. Do not fabricate confidence or heat.
+- The response must not include any key named `score`, `danger_score`,
+  `raw_score`, `z`, or `components`.
+
+Mapping:
+
+- The lineup maps to the same source as `GET /games/{game_id}` `lineup`.
+- `verdict` and `attack_tags` map to
+  `build_scouting_report_payload(...)["report_design"]` and existing
+  `PocketCardEdit` values.
+- `zone_heat.wedges` map to the same tenant-scoped aggregates behind
+  `build_defensive_grid_payload(...)` / `render_field_fan(...)`, exposed as
+  numbers instead of rendered SVG.
+
 ### POST `/api/v1/games/{game_id}/advance`
 
 Advances the derived current hitter to another lineup slot and returns the new
@@ -870,6 +958,9 @@ Required tests:
 - `POST /games` creates or reuses a game and API charting session.
 - `GET /games/{id}` returns only tenant-scoped game state.
 - Hitter-card payload matches this contract exactly for id and by-jersey lookup.
+- `GET /games/{game_id}/lineup-summaries` returns one tenant-scoped summary per
+  lineup slot, caps `attack_tags` at 3, returns `null` verdict/`zone_heat` and
+  empty `attack_tags` for uncharted hitters, and leaks no score fields.
 - Card payloads reuse existing services and preserve honest confidence/low
   sample fields.
 - `POST /games/{game_id}/events` accepts single events and `{ "events": [...] }`.

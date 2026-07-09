@@ -8,11 +8,11 @@ struct AppRootView: View {
     @StateObject private var speech: SpeechPlaybackService
     @StateObject private var pitchService: PitchCallService
     @StateObject private var pushToTalk: PushToTalkService
+    @StateObject private var scouting: DiamondScoutLineupService
 
     @State private var role: UserRole?
     @State private var room: Room?
     @State private var showSettings = false
-    @State private var showDiamondScout = false
 
     init() {
         let settings = SettingsStore()
@@ -29,16 +29,13 @@ struct AppRootView: View {
         _pushToTalk = StateObject(wrappedValue: PushToTalkService(audioSessionService: audioSession) { message in
             try await webSocket.send(message)
         })
+        _scouting = StateObject(wrappedValue: DiamondScoutLineupService(settings: settings))
     }
 
     var body: some View {
         NavigationStack {
             Group {
-                if showDiamondScout {
-                    DiamondScoutHomeView(settings: settings) {
-                        showDiamondScout = false
-                    }
-                } else if let role, let room {
+                if let role, let room {
                     switch role {
                     case .coach:
                         CoachDashboardView(
@@ -47,7 +44,8 @@ struct AppRootView: View {
                             webSocket: webSocket,
                             routeState: routeMonitor.state,
                             pitchService: pitchService,
-                            pushToTalk: pushToTalk
+                            pushToTalk: pushToTalk,
+                            scouting: scouting
                         )
                     case .catcher:
                         CatcherReceiverView(
@@ -71,14 +69,9 @@ struct AppRootView: View {
                         room = Room(code: response.code, mode: response.mode, expiresAt: response.expiresAt, token: response.token)
                     }
                 } else {
-                    RoleSelectionView(
-                        onSelect: { selectedRole in
-                            role = selectedRole
-                        },
-                        onDiamondScout: {
-                            showDiamondScout = true
-                        }
-                    )
+                    RoleSelectionView { selectedRole in
+                        role = selectedRole
+                    }
                 }
             }
             .toolbar {

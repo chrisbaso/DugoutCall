@@ -395,6 +395,59 @@ public struct DiamondScoutNextHitter: Codable, Equatable, Identifiable {
     }
 }
 
+public struct DiamondScoutLineupSummariesResponse: Codable, Equatable {
+    public let gameID: Int
+    public let opponentID: Int
+    public let summaries: [DiamondScoutHitterSummary]
+
+    enum CodingKeys: String, CodingKey {
+        case gameID = "game_id"
+        case opponentID = "opponent_id"
+        case summaries
+    }
+}
+
+public struct DiamondScoutHitterSummary: Codable, Equatable, Identifiable {
+    public var id: Int { hitter.id }
+    public let slot: Int
+    public let hitter: DiamondScoutHitter
+    public let verdict: String?
+    public let attackTags: [String]
+    public let zoneHeat: DiamondScoutZoneHeat?
+
+    public var hasScoutingData: Bool {
+        verdict != nil || !attackTags.isEmpty || zoneHeat != nil
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case slot
+        case hitter
+        case verdict
+        case attackTags = "attack_tags"
+        case zoneHeat = "zone_heat"
+    }
+}
+
+public struct DiamondScoutZoneHeat: Codable, Equatable {
+    public let kind: String
+    public let wedges: [DiamondScoutHeatWedge]
+    public let sampleSize: Int
+    public let lowSample: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case wedges
+        case sampleSize = "sample_size"
+        case lowSample = "low_sample"
+    }
+}
+
+public struct DiamondScoutHeatWedge: Codable, Equatable, Identifiable {
+    public var id: String { location }
+    public let location: String
+    public let value: Int
+}
+
 public struct DiamondScoutEventsRequest: Codable, Equatable {
     public let events: [DiamondScoutChartingEvent]
 }

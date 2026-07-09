@@ -8,6 +8,7 @@ public protocol DiamondScoutClient {
     func games(opponentID: Int?) async throws -> [DiamondScoutGame]
     func game(id: Int) async throws -> DiamondScoutGameContext
     func currentHitter(gameID: Int) async throws -> DiamondScoutCurrentHitter
+    func lineupSummaries(gameID: Int) async throws -> DiamondScoutLineupSummariesResponse
     func hitterCard(opponentID: Int, hitterID: Int, gameID: Int?) async throws -> DiamondScoutHitterCard
     func hitterCardByJersey(opponentID: Int, jersey: String, gameID: Int?) async throws -> DiamondScoutHitterCard
     func postEvents(gameID: Int, events: [DiamondScoutChartingEvent]) async throws -> DiamondScoutEventsResponse
@@ -61,6 +62,10 @@ public final class DiamondScoutAPIClient: DiamondScoutClient {
 
     public func currentHitter(gameID: Int) async throws -> DiamondScoutCurrentHitter {
         try await get("games/\(gameID)/current-hitter")
+    }
+
+    public func lineupSummaries(gameID: Int) async throws -> DiamondScoutLineupSummariesResponse {
+        try await get("games/\(gameID)/lineup-summaries")
     }
 
     public func hitterCard(opponentID: Int, hitterID: Int, gameID: Int? = nil) async throws -> DiamondScoutHitterCard {
@@ -202,7 +207,8 @@ public final class DiamondScoutMockClient: DiamondScoutClient {
             lineup: [
                 DiamondScoutLineupHitter(slot: 1, hitterID: 4, jersey: "4", name: "Isaiah Kelly", notes: "Hold runners 1-0."),
                 DiamondScoutLineupHitter(slot: 2, hitterID: 8, jersey: "8", name: "Mason Strey", notes: "Late trigger. Challenge in."),
-                DiamondScoutLineupHitter(slot: 3, hitterID: 12, jersey: "12", name: "Nolan Price", notes: "Bunt threat.")
+                DiamondScoutLineupHitter(slot: 3, hitterID: 12, jersey: "12", name: "Nolan Price", notes: "Bunt threat."),
+                DiamondScoutLineupHitter(slot: 4, hitterID: 23, jersey: "23", name: "Quinn Walsh", notes: nil)
             ],
             eventSummary: DiamondScoutEventSummary(acceptedEvents: 12, plateAppearances: 3, lastEventID: "dc-evt-0012")
         )
@@ -219,6 +225,76 @@ public final class DiamondScoutMockClient: DiamondScoutClient {
             next: [
                 DiamondScoutNextHitter(slot: 5, hitterID: 8, displayName: "#8 Strey"),
                 DiamondScoutNextHitter(slot: 6, hitterID: 12, displayName: "#12 Price")
+            ]
+        )
+    }
+
+    public func lineupSummaries(gameID: Int) async throws -> DiamondScoutLineupSummariesResponse {
+        DiamondScoutLineupSummariesResponse(
+            gameID: gameID,
+            opponentID: 70,
+            summaries: [
+                DiamondScoutHitterSummary(
+                    slot: 1,
+                    hitter: DiamondScoutHitter(id: 4, name: "Isaiah Kelly", displayName: "#4 Isaiah Kelly", jersey: "4", bats: "R"),
+                    verdict: "Dead-red early in counts; chases low-away with two strikes.",
+                    attackTags: ["Start soft", "Climb w/ 2K"],
+                    zoneHeat: DiamondScoutZoneHeat(
+                        kind: "field_fan",
+                        wedges: [
+                            DiamondScoutHeatWedge(location: "lf_line", value: 12),
+                            DiamondScoutHeatWedge(location: "left_field", value: 33),
+                            DiamondScoutHeatWedge(location: "center_field", value: 28),
+                            DiamondScoutHeatWedge(location: "right_field", value: 18),
+                            DiamondScoutHeatWedge(location: "rf_line", value: 9)
+                        ],
+                        sampleSize: 18,
+                        lowSample: false
+                    )
+                ),
+                DiamondScoutHitterSummary(
+                    slot: 2,
+                    hitter: DiamondScoutHitter(id: 8, name: "Mason Strey", displayName: "#8 Mason Strey", jersey: "8", bats: "L"),
+                    verdict: "Late trigger; vulnerable to velocity on the inner half.",
+                    attackTags: ["Challenge in", "FB up", "No waste pitches"],
+                    zoneHeat: DiamondScoutZoneHeat(
+                        kind: "field_fan",
+                        wedges: [
+                            DiamondScoutHeatWedge(location: "lf_line", value: 8),
+                            DiamondScoutHeatWedge(location: "left_field", value: 18),
+                            DiamondScoutHeatWedge(location: "center_field", value: 30),
+                            DiamondScoutHeatWedge(location: "right_field", value: 28),
+                            DiamondScoutHeatWedge(location: "rf_line", value: 16)
+                        ],
+                        sampleSize: 12,
+                        lowSample: false
+                    )
+                ),
+                DiamondScoutHitterSummary(
+                    slot: 3,
+                    hitter: DiamondScoutHitter(id: 12, name: "Nolan Price", displayName: "#12 Nolan Price", jersey: "12", bats: "R"),
+                    verdict: "Bunt threat; slap contact to the left side.",
+                    attackTags: ["Crash corners", "Stay low"],
+                    zoneHeat: DiamondScoutZoneHeat(
+                        kind: "field_fan",
+                        wedges: [
+                            DiamondScoutHeatWedge(location: "lf_line", value: 25),
+                            DiamondScoutHeatWedge(location: "left_field", value: 35),
+                            DiamondScoutHeatWedge(location: "center_field", value: 22),
+                            DiamondScoutHeatWedge(location: "right_field", value: 12),
+                            DiamondScoutHeatWedge(location: "rf_line", value: 6)
+                        ],
+                        sampleSize: 9,
+                        lowSample: true
+                    )
+                ),
+                DiamondScoutHitterSummary(
+                    slot: 4,
+                    hitter: DiamondScoutHitter(id: 23, name: "Quinn Walsh", displayName: "#23 Quinn Walsh", jersey: "23", bats: nil),
+                    verdict: nil,
+                    attackTags: [],
+                    zoneHeat: nil
+                )
             ]
         )
     }
