@@ -165,7 +165,6 @@ public final class DiamondScoutMockClient: DiamondScoutClient {
         DiamondScoutSession(
             schemaVersion: "2026-08-17",
             program: DiamondScoutProgram(name: "Diamond Scout", season: "2026"),
-            device: DiamondScoutDevice(id: "dcd_reference", label: "Reference iPhone", platform: "ios", lastUsedAt: nil),
             capabilities: DiamondScoutCapabilities(
                 hitterCards: true,
                 gameSetup: true,
@@ -175,6 +174,7 @@ public final class DiamondScoutMockClient: DiamondScoutClient {
                 offlineEventQueue: true,
                 devicePairing: true
             ),
+            device: DiamondScoutDevice(id: "dcd_reference", label: "Reference iPhone", platform: "ios", lastUsedAt: nil),
             countRulesVersion: "2026-08-17",
             enums: DiamondScoutEnums(
                 pitchResults: ["ball", "called_strike", "swinging_strike", "foul", "foul_bunt", "in_play", "hbp"],

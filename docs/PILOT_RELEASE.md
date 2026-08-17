@@ -18,7 +18,7 @@ An Apple/EAS interactive credential prompt is an authorized external boundary. P
 
 ## Backend deploy and verification
 
-Deploy the branch to an isolated preview/staging service, or verify the existing Render service has no conflicting production use before updating it. Required environment names are `PORT`, `CORS_ORIGINS`, `ROOM_TOKEN_SECRET`, `DIAGNOSTICS_TOKEN`, and optional LiveKit URL/API key/API secret. Never put Diamond URLs, credentials, or scouting data in the backend.
+Deploy the branch to an isolated preview/staging service, or verify the existing Render service has no conflicting production use before updating it. Required environment names are `PORT`, `CORS_ORIGINS`, and `DUGOUTCALL_TOKEN_SECRET`; optional voice credentials are `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`. Room diagnostics are protected by the same signed, role-bound room credential and do not use a separate diagnostics secret. Never put Diamond URLs, credentials, or scouting data in the backend.
 
 Verify HTTPS/WSS, `/health`, room create/join, six-digit code and TTL, create/join IP rate limits, signed role-bound/expiring room tokens, one coach/one catcher, reconnect, expired-room failure, protected/redacted diagnostics, and missing-LiveKit warning. A staging backend without LiveKit credentials can validate pitch relay but cannot pass the voice field gate.
 
