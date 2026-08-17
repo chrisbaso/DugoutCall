@@ -9,7 +9,7 @@ The only controlled-pilot client is `mobile/`, an Expo/React Native iOS app dist
 - Contract: `docs/contracts/diamond-dugoutcall-2026-08-17.json`
 - Expo SDK: 57
 - App version: `0.2.0`
-- iOS build number: `16`
+- iOS build number: `18`
 - EAS project: `db0e8152-c984-4ea0-94ae-e0ef585059da`, owner `chrisbaso`
 
 Production builds obtain `EXPO_PUBLIC_DIAMOND_SCOUT_URL` and `EXPO_PUBLIC_DUGOUTCALL_BACKEND_URL` from the EAS build profile. Ordinary users do not see API URL, bearer-token, opponent-ID, or internal-game-ID fields. Manual overrides exist only under `__DEV__`.
@@ -34,4 +34,4 @@ From `mobile/`, run `npm ci`, `npm test`, `npm run typecheck`, `npx expo-doctor`
 
 Swift models decode contract version `2026-08-17` including capabilities, nullable game dates, runner results, current hitter/on-deck, PA-start state, and event sequence. Compile/test them on the macOS GitHub Actions runner; Windows cannot validate SwiftUI.
 
-Complete `docs/FIELD_TEST.md` on two physical iPhones with AirPods before enabling pilot staffs.
+Signed EAS build `0.2.0 (18)` is recorded at `https://expo.dev/accounts/chrisbaso/projects/dugoutcall/builds/0e46e166-ea9d-4e41-8e5a-407298eb2c98`. Apple must first accept the pending account agreement so this build can reach internal TestFlight. Then complete `docs/FIELD_TEST.md` on two physical iPhones with AirPods before enabling pilot staffs.

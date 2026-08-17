@@ -4,9 +4,9 @@ This checklist is the final human gate. Do not mark it passed from simulator, un
 
 ## Exact candidate
 
-- Expo app: version `0.2.0`, iOS build `16`; exact EAS/TestFlight build is added to `docs/PILOT_RELEASE.md` after issuance.
+- Expo app: version `0.2.0`, iOS build `18`; EAS build `0e46e166-ea9d-4e41-8e5a-407298eb2c98` ([build record](https://expo.dev/accounts/chrisbaso/projects/dugoutcall/builds/0e46e166-ea9d-4e41-8e5a-407298eb2c98)). Internal TestFlight delivery remains blocked until the Apple Account Holder accepts the pending agreement.
 - Diamond: branch Preview for `integration/dugoutcall-live`, contract `2026-08-17`, migration `e3d2f9f69976`.
-- Backend: controlled DugoutCall HTTPS/WSS deployment recorded in `docs/PILOT_RELEASE.md`.
+- Backend: `https://dugoutcall.onrender.com`, Render deployment `dep-da1pf2rl550s73agktng`.
 - Data: synthetic integration organization/game recorded in the release record; never use unapproved minor/player data.
 
 ## Preconditions

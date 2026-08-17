@@ -1,14 +1,14 @@
 # DugoutCall integrated pilot release
 
-Status: internal candidate. Automated implementation is complete; exact managed deployments, CI, EAS/TestFlight, and physical field evidence are appended as gates finish. Public launch is disabled.
+Status: conditional internal candidate. Automated implementation, managed deployments, CI, and signed EAS build 18 are complete. Apple blocked internal TestFlight delivery because a required account agreement is missing or expired; the physical gate follows that account-holder action. Public launch is disabled.
 
 ## Coordinates
 
 - Branch: `integration/diamond-scout-live`; start `6c7db8ed7b50d8259c85028c415d5a4e55973e57`
 - Paired Diamond branch: `integration/dugoutcall-live`; start `8f997a13c8b26522aaf0838048670927e3035130`
 - Contract: `2026-08-17`
-- Mobile: Expo SDK 57, app `0.2.0`, iOS build `16`, EAS project `db0e8152-c984-4ea0-94ae-e0ef585059da`
-- Backend baseline: `https://dugoutcall.onrender.com`; use only after the candidate deploy passes the controlled staging checks below
+- Mobile: Expo SDK 57, app `0.2.0`, iOS build `18`, EAS project `db0e8152-c984-4ea0-94ae-e0ef585059da`
+- Backend: `https://dugoutcall.onrender.com`; verified candidate deployment `dep-da1pf2rl550s73agktng` from `a80b792ff1914bf780bda3cb63fddb950251de58`
 
 ## Mobile build and TestFlight
 
@@ -36,4 +36,11 @@ Known risks include physical Bluetooth/audio-route behavior not reproducible in 
 
 ## Release evidence
 
-Append exact branch SHAs, linked draft PRs, CI run URLs, Diamond Preview, backend deployment, EAS build ID/URL, internal TestFlight status, automated test totals, and the signed `docs/FIELD_TEST.md` evidence before enabling the three pilot staffs. No billing, Android, HQ, GameChanger automation, catcher talkback/acknowledgements, or public launch is part of this release.
+- Linked draft PRs: Diamond [#16](https://github.com/chrisbaso/diamond-scout-assistant/pull/16), DugoutCall [#1](https://github.com/chrisbaso/DugoutCall/pull/1).
+- Diamond Preview: `https://diamond-scout-assistant-7dizs8asd-chrisbasos-projects.vercel.app`; Vercel deployment `dpl_DrYLHLK1u7BAiuhr8jxfPcfzFsCW`; Supabase migration head `e3d2f9f69976` with final security/performance advisors clear.
+- Backend: Render service `srv-d7t4cn50lvsc73d7b2d0`, deployment `dep-da1pf2rl550s73agktng`; credential-safe live HTTPS/WSS smoke passed signed roles, LiveKit issuance, one-way relay, and protected/redacted diagnostics.
+- Mobile artifact: signed store-distribution build `0.2.0 (18)`, EAS ID `0e46e166-ea9d-4e41-8e5a-407298eb2c98`, [build record](https://expo.dev/accounts/chrisbaso/projects/dugoutcall/builds/0e46e166-ea9d-4e41-8e5a-407298eb2c98), source `a052aabfc32a8c98e6c4720f2c7afa49b509f5fc`.
+- TestFlight: submission `6b3065e2-48fd-4fe5-a88a-ce0ff86e47d1` ended `ERRORED`; Apple returned `403` because a required agreement is missing or expired. The Account Holder must accept it before the same signed build can be delivered to internal testers.
+- Automated evidence: Diamond `155 passed`; DugoutCall server `18 passed`; Expo `16 passed`, TypeScript clean, Expo Doctor `21/21`, Hermes iOS export passed; real-process E2E returned `PASS` for contract `2026-08-17`. Diamond CI [32080280815](https://github.com/chrisbaso/diamond-scout-assistant/actions/runs/32080280815), DugoutCall CI [32081088976](https://github.com/chrisbaso/DugoutCall/actions/runs/32081088976), and Swift [32081089029](https://github.com/chrisbaso/DugoutCall/actions/runs/32081089029) passed; GitGuardian passed both PRs.
+
+Do not enable the three pilot staffs until TestFlight delivery and the signed `docs/FIELD_TEST.md` gate are complete. No billing, Android, HQ, GameChanger automation, catcher talkback/acknowledgements, paid service upgrade, or public launch is part of this release.
