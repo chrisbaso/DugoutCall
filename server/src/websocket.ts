@@ -4,6 +4,8 @@ import type { ClientMessage, ServerMessage, UserRole } from './types.js';
 import type { RoomStore } from './rooms.js';
 import type { RoomDiagnostics } from './diagnostics.js';
 import { isSignalingMessage } from './signaling.js';
+import { verifyRoomToken } from './auth.js';
+import { isUserRole } from './types.js';
 
 interface Session {
   socket: WebSocket;
@@ -18,7 +20,8 @@ const send = (socket: WebSocket, message: ServerMessage) => {
 export function attachWebSocketServer(
   server: http.Server,
   rooms: RoomStore,
-  diagnostics?: RoomDiagnostics
+  diagnostics?: RoomDiagnostics,
+  tokenSecret = process.env.DUGOUTCALL_TOKEN_SECRET ?? 'local-development-secret-change-me'
 ): WebSocketServer {
   const wss = new WebSocketServer({ server });
   const sessions = new Map<WebSocket, Session>();
@@ -54,6 +57,12 @@ export function attachWebSocketServer(
         const message = JSON.parse(raw.toString()) as ClientMessage;
 
         if (message.type === 'join_room') {
+          if (!isUserRole(message.role)) throw new Error('Invalid participant role');
+          if (!message.token) throw new Error('Room credential required');
+          const claims = verifyRoomToken(message.token, tokenSecret);
+          if (claims.roomCode !== message.code || claims.role !== message.role) {
+            throw new Error('Room credential does not match requested room and role');
+          }
           const participant = rooms.joinRoom(message.code, {
             role: message.role,
             displayName: message.displayName
@@ -110,7 +119,6 @@ export function attachWebSocketServer(
           diagnostics?.record(session.code, {
             kind: 'pitch_call',
             role: session.role,
-            detail: message.spokenText,
             recipientCount: recipients
           });
           return;

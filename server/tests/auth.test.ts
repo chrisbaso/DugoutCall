@@ -41,6 +41,28 @@ describe('room tokens', () => {
 
     expect(() => verifyRoomToken(tampered, 'test-secret', 1_000)).toThrow(/invalid token/i);
   });
+
+  it('rejects expired tokens and malformed roles', () => {
+    const expired = createRoomToken({
+      secret: 'test-secret',
+      roomCode: '123456',
+      role: 'catcher',
+      expiresAt: 999
+    });
+    expect(() => verifyRoomToken(expired, 'test-secret', 1_000)).toThrow(/expired/i);
+
+    const payload = Buffer.from(
+      JSON.stringify({ roomCode: '123456', role: 'admin', expiresAt: 10_000 })
+    ).toString('base64url');
+    const malformedRole = createRoomToken({
+      secret: 'test-secret',
+      roomCode: '123456',
+      role: 'coach',
+      expiresAt: 10_000
+    });
+    const signature = malformedRole.split('.')[1];
+    expect(() => verifyRoomToken(`${payload}.${signature}`, 'test-secret', 1_000)).toThrow(/invalid token/i);
+  });
 });
 
 describe('livekit voice tokens', () => {

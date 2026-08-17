@@ -7,22 +7,26 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "test": "vitest run"
+    "test": "vitest run --pool=threads --no-file-parallelism",
+    "test:e2e": "tsx ../integration/cross-repo-e2e.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
-    "express": "^4.19.2",
+    "express": "4.22.2",
     "livekit-server-sdk": "^2.15.3",
-    "ws": "^8.17.1"
+    "ws": "8.21.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.10",
     "@types/ws": "^8.5.10",
-    "tsx": "^4.16.2",
+    "tsx": "4.23.12",
     "typescript": "^5.5.3",
-    "vitest": "^1.6.0"
+    "vitest": "4.1.10"
+  },
+  "overrides": {
+    "body-parser": "1.20.6"
   }
 }

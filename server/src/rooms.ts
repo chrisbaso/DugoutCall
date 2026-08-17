@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { Participant, Room, UserRole } from './types.js';
+import { isUserRole, type Participant, type Room, type UserRole } from './types.js';
 
 export interface RoomStoreOptions {
   ttlMs?: number;
@@ -52,6 +52,7 @@ export class RoomStore {
 
   joinRoom(code: string, input: { role: UserRole; displayName?: string }): Participant {
     const room = this.getRoom(code);
+    if (!isUserRole(input.role)) throw new Error('Invalid participant role');
     const participant: Participant = {
       id: crypto.randomUUID(),
       role: input.role,
