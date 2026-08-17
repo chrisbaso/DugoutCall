@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - "ios/**"
+      - "docs/contracts/**"
       - ".github/workflows/ios.yml"
   pull_request:
     paths:
       - "ios/**"
+      - "docs/contracts/**"
       - ".github/workflows/ios.yml"
   workflow_dispatch:
 
