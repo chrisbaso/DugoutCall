@@ -19,6 +19,10 @@
     },
     "production": {
       "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_DIAMOND_SCOUT_URL": "https://diamond-scout-assistant-7dizs8asd-chrisbasos-projects.vercel.app",
+        "EXPO_PUBLIC_DUGOUTCALL_BACKEND_URL": "https://dugoutcall.onrender.com"
+      },
       "ios": {
         "simulator": false
       }

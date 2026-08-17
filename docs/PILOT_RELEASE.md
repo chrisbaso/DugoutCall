@@ -22,6 +22,8 @@ Deploy the branch to an isolated preview/staging service, or verify the existing
 
 Verify HTTPS/WSS, `/health`, room create/join, six-digit code and TTL, create/join IP rate limits, signed role-bound/expiring room tokens, one coach/one catcher, reconnect, expired-room failure, protected/redacted diagnostics, and missing-LiveKit warning. A staging backend without LiveKit credentials can validate pitch relay but cannot pass the voice field gate.
 
+Run the credential-safe live-service check with `node integration/live-backend-smoke.mjs https://your-backend.example`. It emits booleans only and never prints room or LiveKit credentials.
+
 Recovery: stop new rooms, roll back to the last passing server build, preserve only redacted room diagnostics, rotate room/diagnostic/LiveKit secrets if exposure is suspected, and repeat auth/relay/reconnect/voice-token tests. No room state is a scouting/stat database.
 
 ## Operational readiness
