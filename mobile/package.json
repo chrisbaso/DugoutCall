@@ -15,7 +15,6 @@
       "reactNativeDirectoryCheck": {
         "exclude": [
           "react-native-webrtc",
-          "expo-av",
           "@livekit/react-native-expo-plugin"
         ]
       }
@@ -27,7 +26,8 @@
     "@livekit/react-native-expo-plugin": "^1.0.2",
     "@livekit/react-native-webrtc": "^144.0.0",
     "expo": "~57.0.14",
-    "expo-av": "~16.0.8",
+    "expo-asset": "~57.0.12",
+    "expo-audio": "~57.0.3",
     "expo-file-system": "~57.0.4",
     "expo-secure-store": "~57.0.1",
     "expo-speech": "~57.0.1",

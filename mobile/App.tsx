@@ -1,4 +1,4 @@
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from "expo-av";
+import { requestRecordingPermissionsAsync, setAudioModeAsync, useAudioPlayer } from "expo-audio";
 import { Directory, File, Paths } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import * as Speech from "expo-speech";
@@ -659,6 +659,7 @@ const activateWebRTCAudio = () => {
 };
 
 export default function App() {
+  const testTonePlayer = useAudioPlayer(testTone, { downloadFirst: true });
   const socketRef = useRef<WebSocket | null>(null);
   const liveKitRoomRef = useRef<Room | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -933,41 +934,35 @@ export default function App() {
   };
 
   const configureAudioForPlayback = async (label = "playback") => {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-      playThroughEarpieceAndroid: false,
-      playsInSilentModeIOS: true,
-      shouldDuckAndroid: false,
-      staysActiveInBackground: false
+    await setAudioModeAsync({
+      allowsRecording: false,
+      interruptionMode: "doNotMix",
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      shouldRouteThroughEarpiece: false
     });
     updateVoiceDiagnostics({ outputRoute: configuredOutputRoute(label) });
     setVoiceStatus("Audio playback ready");
   };
 
   const configureAudioForTalk = async () => {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: true,
-      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-      playThroughEarpieceAndroid: false,
-      playsInSilentModeIOS: true,
-      shouldDuckAndroid: false,
-      staysActiveInBackground: false
+    await setAudioModeAsync({
+      allowsRecording: true,
+      interruptionMode: "doNotMix",
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      shouldRouteThroughEarpiece: false
     });
     updateVoiceDiagnostics({ outputRoute: configuredOutputRoute("voice transmit") });
   };
 
   const configureAudioForVoiceReceive = async (label = "voice receive", speakerRequested = forceSpeaker) => {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: !speakerRequested,
-      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-      playThroughEarpieceAndroid: false,
-      playsInSilentModeIOS: true,
-      shouldDuckAndroid: false,
-      staysActiveInBackground: false
+    await setAudioModeAsync({
+      allowsRecording: !speakerRequested,
+      interruptionMode: "doNotMix",
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      shouldRouteThroughEarpiece: false
     });
     updateVoiceDiagnostics({ outputRoute: configuredOutputRoute(label, speakerRequested) });
   };
@@ -1008,15 +1003,9 @@ export default function App() {
 
   const playTone = async () => {
     await configureAudioForPlayback();
-    const { sound } = await Audio.Sound.createAsync(testTone, {
-      shouldPlay: true,
-      volume: 1
-    });
-    sound.setOnPlaybackStatusUpdate((playbackStatus) => {
-      if (playbackStatus.isLoaded && playbackStatus.didJustFinish) {
-        void sound.unloadAsync();
-      }
-    });
+    testTonePlayer.volume = 1;
+    await testTonePlayer.seekTo(0);
+    testTonePlayer.play();
   };
 
   const requestJson = async <T,>(path: string, init: RequestInit): Promise<T> => {
@@ -1164,7 +1153,7 @@ export default function App() {
 
       if (roleRef.current === "coach") {
         try {
-          const permission = await Audio.requestPermissionsAsync();
+          const permission = await requestRecordingPermissionsAsync();
           setDiagnosticCheck({
             key: "microphone",
             label: "Microphone",

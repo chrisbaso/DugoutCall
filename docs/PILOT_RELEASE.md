@@ -32,7 +32,7 @@ Pregame coach checks: backend reachable, Diamond reachable or cache present, gam
 
 During network trouble, Diamond outcomes remain visibly queued and room calling continues. During room trouble, the app shows disconnected/reconnecting and never claims delivery. The queue must read Synced before postgame closeout.
 
-Known risks include physical Bluetooth/audio-route behavior not reproducible in automation, LiveKit provider configuration, upstream Expo/Metro build-tool advisories, and the retained `expo-av` transition dependency. League rules differ; the club is responsible for verifying electronic communication is permitted.
+Known risks include physical Bluetooth/audio-route behavior not reproducible in automation, LiveKit provider configuration, and upstream Expo/Metro build-tool advisories. The pilot uses the SDK 57 `expo-audio` module; league rules differ, and the club is responsible for verifying electronic communication is permitted.
 
 ## Release evidence
 
