@@ -30,6 +30,14 @@ import {
   RTCSessionDescription,
   RTCView
 } from "@livekit/react-native-webrtc";
+import { DiamondScoutClient, DiamondClientError } from "./src/diamondScout/client";
+import { ScoutingCacheRepository } from "./src/diamondScout/cache";
+import { ExpoFileStore } from "./src/diamondScout/expoLocalStore";
+import { GameEventFactory, type InPlayDetail, type QuickOutcome } from "./src/diamondScout/gameSession";
+import { OfflineEventQueue } from "./src/diamondScout/offlineQueue";
+import { DevicePairingService, DEVICE_CREDENTIAL_KEY } from "./src/diamondScout/pairing";
+import type { CurrentHitter, DeviceSession, GameSummary, HitterCard, LineupSummary } from "./src/diamondScout/types";
+import { roomSocketJoin } from "./src/dugoutCall/rooms";
 
 type Role = "coach" | "catcher";
 type AppMode = "game" | "practice";
@@ -125,7 +133,7 @@ type PresetCall = {
   location?: string;
 };
 
-type AppScreen = "role" | "coach" | "catcher" | "diamondScout";
+type AppScreen = "role" | "pair" | "games" | "coach" | "catcher" | "diamondScout";
 type DiamondScoutView = "home" | "opponents" | "games" | "gameDetail" | "currentHitter" | "hitterCard" | "debug";
 type CountBucket = "early" | "two_strikes" | "any";
 type ZoneTint = "hot" | "cold" | "none";
@@ -209,7 +217,8 @@ type ScoutingLoadMetrics = {
 };
 
 const testTone = require("./assets/test-tone.wav");
-const defaultBackendUrl = "https://dugoutcall.onrender.com";
+const defaultBackendUrl = process.env.EXPO_PUBLIC_DUGOUTCALL_BACKEND_URL || "https://dugoutcall.onrender.com";
+const defaultDiamondScoutUrl = process.env.EXPO_PUBLIC_DIAMOND_SCOUT_URL || "";
 const defaultPitchButtons = ["Fastball", "Curveball", "Change-up"];
 const locations = ["Up", "Down", "In", "Away", "Middle", "Up/In", "Up/Away", "Down/In", "Down/Away"];
 const contextButtons = ["0-0", "Ahead", "Behind", "2 Strikes", "Runner On"];
@@ -507,6 +516,62 @@ const apiSummaryToHitter = (summary: HitterSummaryApiItem): ScoutHitter => {
   };
 };
 
+const contractSummaryToHitter = (summary: LineupSummary["summaries"][number]): ScoutHitter => {
+  const sample = typeof summary.zone_heat === "object" && summary.zone_heat
+    ? Number((summary.zone_heat as { sample_size?: unknown }).sample_size ?? 0)
+    : 0;
+  const verdict = summary.verdict || "Limited data - pitch your strengths";
+  return {
+    bats: summary.hitter.bats || "-",
+    chips: summary.attack_tags.slice(0, 3).map((text) => ({ text, countBucket: "any" as const })),
+    chaseZone: "No unsupported zone recommendation",
+    confidenceTier: sample > 0 ? "limited" : "none",
+    damageZone: "No unsupported zone recommendation",
+    defensiveNote: "Use the full card for evidence-backed positioning",
+    effectiveSample: { pa: sample },
+    id: String(summary.hitter.id),
+    jersey: summary.hitter.jersey || "--",
+    name: summary.hitter.display_name,
+    plan: verdict,
+    position: "H",
+    recommendedPitch: "",
+    recommendedZone: 0,
+    speed: "Not provided",
+    spray: null,
+    verdict,
+    zoneTints: normalizeZoneTints()
+  };
+};
+
+const contractCardToHitter = (card: HitterCard): ScoutHitter => {
+  const plan = card.plan?.pitch_plan || card.plan?.out_plan || card.plan?.coach_note || "Limited data - pitch your strengths";
+  const sample = Number(card.confidence.pa_sample || 0);
+  const jerseyMatch = card.hitter.display_name.match(/^#([^ ]+)/);
+  return {
+    bats: card.hitter.bats || "-",
+    chips: (card.chips || card.attack_tags?.map((text) => ({ text })) || []).slice(0, 3).map((chip) => ({
+      text: chip.text,
+      countBucket: "any" as const
+    })),
+    chaseZone: "See full Diamond card",
+    confidenceTier: sample > 0 ? "limited" : "none",
+    damageZone: "See full Diamond card",
+    defensiveNote: "See full Diamond card",
+    effectiveSample: { pa: sample },
+    id: String(card.hitter.id),
+    jersey: jerseyMatch?.[1] || "--",
+    name: card.hitter.display_name,
+    plan,
+    position: "H",
+    recommendedPitch: "",
+    recommendedZone: 0,
+    speed: "Not provided",
+    spray: null,
+    verdict: plan,
+    zoneTints: normalizeZoneTints()
+  };
+};
+
 const fetchDiamondScoutHitterSummaries = async ({
   baseUrl,
   bearerToken,
@@ -607,15 +672,19 @@ export default function App() {
   const scoutingRefreshRef = useRef<AbortController | null>(null);
   const roleRef = useRef<Role | null>(null);
   const roomCodeRef = useRef("");
+  const gameEventFactoryRef = useRef<GameEventFactory | null>(null);
+  const localStore = useMemo(() => new ExpoFileStore(), []);
+  const scopedCache = useMemo(() => new ScoutingCacheRepository(localStore), [localStore]);
+  const eventQueue = useMemo(() => new OfflineEventQueue(localStore), [localStore]);
   const [screen, setScreen] = useState<AppScreen>("role");
   const [role, setRole] = useState<Role | null>(null);
   const [backendUrl, setBackendUrl] = useState(defaultBackendUrl);
-  const [diamondScoutBaseUrl, setDiamondScoutBaseUrl] = useState("");
+  const [diamondScoutBaseUrl, setDiamondScoutBaseUrl] = useState(defaultDiamondScoutUrl);
   const [diamondScoutToken, setDiamondScoutToken] = useState("");
   const [diamondScoutOpponentId, setDiamondScoutOpponentId] = useState(diamondScoutMock.opponentId);
-  const [diamondScoutMockMode, setDiamondScoutMockMode] = useState(true);
+  const [diamondScoutMockMode, setDiamondScoutMockMode] = useState(false);
   const [diamondScoutCacheOnly, setDiamondScoutCacheOnly] = useState(false);
-  const [scoutingCache, setScoutingCache] = useState<ScoutingCache>(mockScoutingCache());
+  const [scoutingCache, setScoutingCache] = useState<ScoutingCache>(noDataScoutingCache("unselected", "Select a game"));
   const [scoutingMetrics, setScoutingMetrics] = useState<ScoutingLoadMetrics>({});
   const [currentHitterId, setCurrentHitterId] = useState(diamondScoutMock.currentHitterId);
   const [scoutEnabled, setScoutEnabled] = useState(true);
@@ -642,6 +711,25 @@ export default function App() {
   const [diagnosticChecks, setDiagnosticChecks] = useState<DiagnosticCheck[]>(initialDiagnosticChecks);
   const [isRunningDiagnostics, setIsRunningDiagnostics] = useState(false);
   const [lastServerDiagnostics, setLastServerDiagnostics] = useState("No server diagnostics fetched");
+  const [pairingCode, setPairingCode] = useState("");
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const [deviceSession, setDeviceSession] = useState<DeviceSession | null>(null);
+  const [availableGames, setAvailableGames] = useState<GameSummary[]>([]);
+  const [selectedGame, setSelectedGame] = useState<GameSummary | null>(null);
+  const [currentApiHitter, setCurrentApiHitter] = useState<CurrentHitter | null>(null);
+  const [queueStatus, setQueueStatus] = useState("Synced");
+  const [outcomeVisible, setOutcomeVisible] = useState(false);
+  const [inPlayMode, setInPlayMode] = useState(false);
+  const [inPlayDraft, setInPlayDraft] = useState<Partial<InPlayDetail>>({});
+  const pairingService = useMemo(
+    () =>
+      new DevicePairingService(
+        SecureStore,
+        (credential) => new DiamondScoutClient(diamondScoutBaseUrl, credential),
+        callId
+      ),
+    [diamondScoutBaseUrl]
+  );
 
   useEffect(() => {
     void configureAudioForPlayback();
@@ -649,17 +737,11 @@ export default function App() {
 
   useEffect(() => {
     const loadStoredDiamondScoutConfig = async () => {
-      const [baseUrl, token, opponentId, mockMode, storedPitchButtons] = await Promise.all([
-        SecureStore.getItemAsync(diamondScoutBaseUrlKey),
-        SecureStore.getItemAsync(diamondScoutTokenKey),
-        SecureStore.getItemAsync(diamondScoutOpponentIdKey),
-        SecureStore.getItemAsync(diamondScoutMockModeKey),
+      const [token, storedPitchButtons] = await Promise.all([
+        SecureStore.getItemAsync(DEVICE_CREDENTIAL_KEY),
         SecureStore.getItemAsync(pitchButtonsKey)
       ]);
-      if (baseUrl) setDiamondScoutBaseUrl(baseUrl);
       if (token) setDiamondScoutToken(token);
-      if (opponentId) setDiamondScoutOpponentId(opponentId);
-      if (mockMode) setDiamondScoutMockMode(mockMode === "true");
       if (storedPitchButtons) {
         try {
           const parsed = JSON.parse(storedPitchButtons);
@@ -672,22 +754,6 @@ export default function App() {
 
     void loadStoredDiamondScoutConfig();
   }, []);
-
-  useEffect(() => {
-    void SecureStore.setItemAsync(diamondScoutBaseUrlKey, diamondScoutBaseUrl);
-  }, [diamondScoutBaseUrl]);
-
-  useEffect(() => {
-    void SecureStore.setItemAsync(diamondScoutTokenKey, diamondScoutToken);
-  }, [diamondScoutToken]);
-
-  useEffect(() => {
-    void SecureStore.setItemAsync(diamondScoutOpponentIdKey, diamondScoutOpponentId);
-  }, [diamondScoutOpponentId]);
-
-  useEffect(() => {
-    void SecureStore.setItemAsync(diamondScoutMockModeKey, String(diamondScoutMockMode));
-  }, [diamondScoutMockMode]);
 
   useEffect(() => {
     void SecureStore.setItemAsync(pitchButtonsKey, JSON.stringify(pitchButtons));
@@ -704,10 +770,8 @@ export default function App() {
     [selectedPitch, selectedLocation]
   );
 
-  const liveDiamondScoutReady = Boolean(
-    normalizeBaseUrl(diamondScoutBaseUrl) && diamondScoutToken.trim() && diamondScoutOpponentId.trim()
-  );
-  const effectiveDiamondScoutMockMode = diamondScoutMockMode || !liveDiamondScoutReady;
+  const liveDiamondScoutReady = Boolean(normalizeBaseUrl(diamondScoutBaseUrl) && diamondScoutToken.trim());
+  const effectiveDiamondScoutMockMode = __DEV__ && diamondScoutMockMode;
   const scoutingHitters = scoutingCache.hitters.length ? scoutingCache.hitters : noDataScoutingCache(diamondScoutOpponentId).hitters;
   const fallbackScoutingHitter = diamondScoutMockHitters[0];
   const currentScoutingHitter =
@@ -763,50 +827,50 @@ export default function App() {
 
   const loadScoutingForGame = async (reason: "game_start" | "batter_advance" | "manual" = "game_start") => {
     const startedAt = Date.now();
-
     if (effectiveDiamondScoutMockMode) {
       const cache = mockScoutingCache();
       applyScoutingCache(cache);
-      setScoutingMetrics((current) => ({
-        ...current,
-        lastColdLoadMs: Date.now() - startedAt,
-        lastLoadedAt: Date.now()
-      }));
-      await writePersistedScoutCache(cache);
+      setScoutingMetrics((current) => ({ ...current, lastColdLoadMs: Date.now() - startedAt, lastLoadedAt: Date.now() }));
       return;
     }
-
-    const opponentId = diamondScoutOpponentId.trim();
-    const cached = await readPersistedScoutCache(opponentId);
-    if (cached) {
-      applyScoutingCache(cached);
+    const deviceId = deviceSession?.device?.id;
+    const gameId = selectedGame?.id;
+    if (!deviceId || !gameId || !diamondScoutToken) return;
+    const cachedEnvelope = await scopedCache.read<ScoutingCache>(deviceId, gameId);
+    const cached = cachedEnvelope?.value;
+    if (cachedEnvelope) {
+      applyScoutingCache({ ...cachedEnvelope.value, source: "cache" });
       setScoutingMetrics((current) => ({
         ...current,
-        lastLoadedAt: cached.fetchedAt,
+        lastLoadedAt: cachedEnvelope.cachedAt,
         lastWarmLoadMs: Date.now() - startedAt
       }));
     }
-
     if (diamondScoutCacheOnly) {
-      if (!cached) {
-        applyScoutingCache(noDataScoutingCache(opponentId));
-      }
+      if (!cached) applyScoutingCache(noDataScoutingCache(String(selectedGame.opponent_id), selectedGame.opponent_name));
       return;
     }
-
-    scoutingRefreshRef.current?.abort();
-    const controller = new AbortController();
-    scoutingRefreshRef.current = controller;
-
     try {
-      const networkCache = await fetchDiamondScoutHitterSummaries({
-        baseUrl: diamondScoutBaseUrl,
-        bearerToken: diamondScoutToken,
-        opponentId,
-        signal: controller.signal
-      });
+      const client = new DiamondScoutClient(diamondScoutBaseUrl, diamondScoutToken);
+      const [lineup, current] = await Promise.all([client.lineupSummaries(gameId), client.currentHitter(gameId)]);
+      const currentHitter = contractCardToHitter(current.card);
+      const mapped = lineup.summaries.map(contractSummaryToHitter);
+      const hitters = mapped.some((hitter) => hitter.id === currentHitter.id)
+        ? mapped.map((hitter) => (hitter.id === currentHitter.id ? currentHitter : hitter))
+        : [currentHitter, ...mapped];
+      const networkCache: ScoutingCache = {
+        fetchedAt: Date.now(),
+        hitters,
+        opponentId: String(selectedGame.opponent_id),
+        opponentName: selectedGame.opponent_name,
+        schemaVersion: lineup.schema_version,
+        source: "network"
+      };
+      setCurrentApiHitter(current);
+      gameEventFactoryRef.current = new GameEventFactory(current, callId);
       applyScoutingCache(networkCache);
-      await writePersistedScoutCache(networkCache);
+      setCurrentHitterId(currentHitter.id);
+      await scopedCache.write(deviceId, gameId, networkCache);
       setScoutingMetrics((current) => ({
         ...current,
         lastColdLoadMs: cached ? current.lastColdLoadMs : Date.now() - startedAt,
@@ -814,28 +878,38 @@ export default function App() {
         lastRefreshMs: cached || reason === "batter_advance" ? Date.now() - startedAt : current.lastRefreshMs
       }));
       setLastNetworkEvent(`Scouting refreshed at ${compactClock()}`);
+      void client.telemetry("dugoutcall_scouting_loaded", { source: reason }).catch(() => undefined);
     } catch (error) {
-      if (controller.signal.aborted) return;
-      if (!cached) {
-        applyScoutingCache(noDataScoutingCache(opponentId));
-      }
+      if (!cached) applyScoutingCache(noDataScoutingCache(String(selectedGame.opponent_id), selectedGame.opponent_name));
       setLastNetworkEvent(cached ? "Scouting cache active; live refresh failed" : "No scouting cache available");
-    } finally {
-      if (scoutingRefreshRef.current === controller) {
-        scoutingRefreshRef.current = null;
+      if (error instanceof DiamondClientError && error.status === 401) {
+        await pairingService.unpair(async () => {
+          await Promise.all([scopedCache.purgeAll(), eventQueue.purgeAll()]);
+        });
+        setDiamondScoutToken("");
+        setDeviceSession(null);
+        setScreen("pair");
       }
     }
   };
 
-  const advanceHitter = () => {
-    if (!scoutingHitters.length) return;
-    const nextHitter = scoutingHitters[(currentScoutingIndex + 1) % scoutingHitters.length];
-    setCurrentHitterId(nextHitter.id);
-    setSelectedPitch("");
-    setSelectedLocation("");
-    setSelectedContext("");
-    setLastNetworkEvent(`On deck cached: ${nextHitter.name}`);
-    void loadScoutingForGame("batter_advance");
+  const advanceHitter = async () => {
+    if (!selectedGame || !diamondScoutToken) return;
+    try {
+      const updated = await new DiamondScoutClient(diamondScoutBaseUrl, diamondScoutToken).advance(selectedGame.id, {
+        event_id: callId(),
+        direction: "next"
+      });
+      setCurrentApiHitter(updated);
+      gameEventFactoryRef.current = new GameEventFactory(updated, callId);
+      setCurrentHitterId(String(updated.hitter_id));
+      setSelectedPitch("");
+      setSelectedLocation("");
+      setSelectedContext("");
+      await loadScoutingForGame("batter_advance");
+    } catch (error) {
+      Alert.alert("Could not advance hitter", error instanceof Error ? error.message : "Try again.");
+    }
   };
 
   useEffect(() => {
@@ -843,11 +917,7 @@ export default function App() {
       void loadScoutingForGame("game_start");
     }
   }, [
-    diamondScoutBaseUrl,
-    diamondScoutCacheOnly,
-    diamondScoutMockMode,
-    diamondScoutOpponentId,
-    diamondScoutToken,
+    selectedGame?.id,
     screen
   ]);
 
@@ -1022,7 +1092,10 @@ export default function App() {
       const code = roomCodeRef.current || room?.code || joinCode.trim();
       if (code.length === 6) {
         try {
-          const snapshot = await requestJson<RoomDiagnosticSnapshot>(`/rooms/${code}/diagnostics`, { method: "GET" });
+          const snapshot = await requestJson<RoomDiagnosticSnapshot>(`/rooms/${code}/diagnostics`, {
+            method: "GET",
+            headers: room?.token ? { Authorization: `Bearer ${room.token}` } : undefined
+          });
           const summary = roomDiagnosticSummary(snapshot);
           const hasCoach = snapshot.recentEvents.some((event) => event.kind === "socket_joined" && event.role === "coach");
           const hasCatcher = snapshot.recentEvents.some((event) => event.kind === "socket_joined" && event.role === "catcher");
@@ -1178,10 +1251,10 @@ export default function App() {
     setRole(nextRole);
   };
 
-  const connectSocket = (nextRole: Role, code: string, displayName: string) => {
+  const connectSocket = (nextRole: Role, credentials: RoomResponse, displayName: string) => {
     disconnectSocket();
     roleRef.current = nextRole;
-    roomCodeRef.current = code;
+    roomCodeRef.current = credentials.code;
     setConnection("connecting");
     setLastNetworkEvent(`Connecting ${nextRole} socket...`);
     const socket = new WebSocket(websocketUrl(backendUrl));
@@ -1189,8 +1262,8 @@ export default function App() {
 
     socket.onopen = () => {
       setConnection("connected");
-      setLastNetworkEvent(`Socket joined ${code} at ${compactClock()}`);
-      socket.send(JSON.stringify({ type: "join_room", code, role: nextRole, displayName }));
+      setLastNetworkEvent(`Socket joined ${credentials.code} at ${compactClock()}`);
+      socket.send(JSON.stringify(roomSocketJoin(credentials, nextRole, displayName)));
     };
 
     socket.onmessage = (event) => {
@@ -1538,19 +1611,137 @@ export default function App() {
     }
   };
 
+  const purgeDiamondLocalData = async () => {
+    await Promise.all([scopedCache.purgeAll(), eventQueue.purgeAll()]);
+    setScoutingCache(noDataScoutingCache("unselected", "Select a game"));
+    setCurrentApiHitter(null);
+    setSelectedGame(null);
+    setAvailableGames([]);
+  };
+
+  const beginCoachFlow = async () => {
+    if (!normalizeBaseUrl(diamondScoutBaseUrl)) {
+      Alert.alert("Pilot configuration blocked", "This build has no Diamond Scout pilot URL. Install the configured TestFlight build.");
+      return;
+    }
+    setStatus("Checking Diamond pairing...");
+    const credential = await pairingService.credential();
+    if (!credential) {
+      setScreen("pair");
+      return;
+    }
+    try {
+      const client = new DiamondScoutClient(diamondScoutBaseUrl, credential);
+      const [session, games] = await Promise.all([client.session(), client.games()]);
+      setDiamondScoutToken(credential);
+      setDeviceSession(session);
+      setAvailableGames(games);
+      setScreen("games");
+      setStatus("Select a Diamond game");
+    } catch (error) {
+      if (error instanceof DiamondClientError && error.status === 401) {
+        await pairingService.unpair(purgeDiamondLocalData);
+        setDiamondScoutToken("");
+        setDeviceSession(null);
+        setScreen("pair");
+        return;
+      }
+      Alert.alert("Diamond unavailable", error instanceof Error ? error.message : "Try again.");
+    }
+  };
+
+  const pairDevice = async () => {
+    if (pairingBusy) return;
+    setPairingBusy(true);
+    try {
+      const paired = await pairingService.pair(pairingCode, "Coach iPhone");
+      const client = new DiamondScoutClient(diamondScoutBaseUrl, paired.credential);
+      const [session, games] = await Promise.all([client.session(), client.games()]);
+      setDiamondScoutToken(paired.credential);
+      setDeviceSession(session);
+      setAvailableGames(games);
+      setPairingCode("");
+      setScreen("games");
+      setStatus(`Paired to ${session.program.name}`);
+    } catch (error) {
+      Alert.alert("Pairing failed", error instanceof Error ? error.message : "Request a new code in Diamond Settings.");
+    } finally {
+      setPairingBusy(false);
+    }
+  };
+
+  const unpairDevice = async () => {
+    await pairingService.unpair(purgeDiamondLocalData);
+    setDiamondScoutToken("");
+    setDeviceSession(null);
+    setScreen("pair");
+    setStatus("Device unpaired; local scouting removed");
+  };
+
+  const selectGameForCoach = async (game: GameSummary) => {
+    if (!diamondScoutToken || !deviceSession?.device?.id) return;
+    setStatus("Loading game and scouting...");
+    setSelectedGame(game);
+    setDiamondScoutOpponentId(String(game.opponent_id));
+    const deviceId = deviceSession.device.id;
+    const cached = await scopedCache.read<ScoutingCache>(deviceId, game.id);
+    if (cached) applyScoutingCache({ ...cached.value, source: "cache" });
+    try {
+      const client = new DiamondScoutClient(diamondScoutBaseUrl, diamondScoutToken);
+      const [detail, lineup, current] = await Promise.all([
+        client.game(game.id),
+        client.lineupSummaries(game.id),
+        client.currentHitter(game.id)
+      ]);
+      const currentHitter = contractCardToHitter(current.card);
+      const mapped = lineup.summaries.map(contractSummaryToHitter);
+      const hitters = mapped.some((hitter) => hitter.id === currentHitter.id)
+        ? mapped.map((hitter) => (hitter.id === currentHitter.id ? currentHitter : hitter))
+        : [currentHitter, ...mapped];
+      const networkCache: ScoutingCache = {
+        fetchedAt: Date.now(),
+        hitters,
+        opponentId: String(game.opponent_id),
+        opponentName: game.opponent_name,
+        schemaVersion: lineup.schema_version,
+        source: "network"
+      };
+      applyScoutingCache(networkCache);
+      setCurrentHitterId(String(current.hitter_id));
+      setCurrentApiHitter(current);
+      gameEventFactoryRef.current = new GameEventFactory(current, callId);
+      await scopedCache.write(deviceId, game.id, networkCache);
+      setLastNetworkEvent(`${detail.lineup.length} lineup entries cached at ${compactClock()}`);
+      void client.telemetry("dugoutcall_game_selected", { source: "mobile" }).catch(() => undefined);
+      await createRoom();
+    } catch (error) {
+      if (cached) {
+        setLastNetworkEvent("Diamond offline; cached scouting loaded");
+        await createRoom();
+      } else {
+        Alert.alert("Game not ready", error instanceof Error ? error.message : "Scouting could not be loaded.");
+      }
+    }
+  };
+
   const createRoom = async () => {
     try {
       setStatus("Creating room...");
       const response = await requestJson<RoomResponse>("/rooms", {
         method: "POST",
-        body: JSON.stringify({ coachName: "Coach", teamName: "DugoutCall", mode: "game" })
+        body: JSON.stringify({ coachName: "Coach", teamName: deviceSession?.program.name || "DugoutCall", mode: "game" })
       });
       setRoom(response);
       roomCodeRef.current = response.code;
       setCurrentRole("coach");
       setScreen("coach");
-      connectSocket("coach", response.code, "Coach");
+      connectSocket("coach", response, "Coach");
       await connectLiveKitVoice(response.livekit, "coach");
+      if (diamondScoutToken) {
+        void new DiamondScoutClient(diamondScoutBaseUrl, diamondScoutToken)
+          .telemetry("dugoutcall_room_created", { status: "created" })
+          .catch(() => undefined);
+      }
     } catch (error) {
       Alert.alert("Could not create room", error instanceof Error ? error.message : "Try again.");
       setStatus("Create room failed");
@@ -1575,7 +1766,7 @@ export default function App() {
       setCurrentRole("catcher");
       setScreen("catcher");
       setCatcherState("Connected");
-      connectSocket("catcher", code, "Catcher");
+      connectSocket("catcher", response, "Catcher");
       await connectLiveKitVoice(response.livekit, "catcher");
       speak("DugoutCall connected.");
     } catch (error) {
@@ -1626,6 +1817,12 @@ export default function App() {
       setSelectedContext("");
       setSendState("sent");
       triggerHaptic("send_success");
+      if (selectedGame && currentApiHitter) setOutcomeVisible(true);
+      if (diamondScoutToken) {
+        void new DiamondScoutClient(diamondScoutBaseUrl, diamondScoutToken)
+          .telemetry("dugoutcall_pitch_call_sent", { status: "relayed" })
+          .catch(() => undefined);
+      }
       setTimeout(() => setSendState("idle"), 900);
       return true;
     }
@@ -1633,6 +1830,94 @@ export default function App() {
     triggerHaptic("send_fail");
     setTimeout(() => setSendState("idle"), 900);
     return false;
+  };
+
+  const refreshQueueStatus = async () => {
+    const deviceId = deviceSession?.device?.id;
+    if (!deviceId) return;
+    const rows = await eventQueue.list(deviceId);
+    const failed = rows.filter((row) => row.status === "failed").length;
+    setQueueStatus(failed ? `${failed} failed · ${rows.length} pending` : rows.length ? `${rows.length} pending` : "Synced");
+  };
+
+  const syncQueuedOutcomes = async (force = false) => {
+    const deviceId = deviceSession?.device?.id;
+    if (!deviceId || !diamondScoutToken) return;
+    const client = new DiamondScoutClient(diamondScoutBaseUrl, diamondScoutToken);
+    const result = await eventQueue.flush(deviceId, (gameId, events) => client.postEvents(gameId, events), force);
+    await refreshQueueStatus();
+    if (result.pending || result.failed) {
+      void client.telemetry("dugoutcall_sync_failed", { pending: result.pending, status: result.failed ? "failed" : "retrying" }).catch(() => undefined);
+      return;
+    }
+    void client.telemetry("dugoutcall_sync_completed", { count: result.synced, pending: 0 }).catch(() => undefined);
+    if (selectedGame) {
+      try {
+        const authoritative = await client.currentHitter(selectedGame.id);
+        setCurrentApiHitter(authoritative);
+        gameEventFactoryRef.current = new GameEventFactory(authoritative, callId);
+        setCurrentHitterId(String(authoritative.hitter_id));
+        await loadScoutingForGame("batter_advance");
+      } catch {
+        setLastNetworkEvent("Outcome synced; current-hitter refresh pending");
+      }
+    }
+  };
+
+  const optimisticOutcome = (current: CurrentHitter, outcome: QuickOutcome, lastSequence: number): CurrentHitter => {
+    let balls = current.count.balls;
+    let strikes = current.count.strikes;
+    if (outcome === "ball") balls += 1;
+    if (["called_strike", "swinging_strike", "foul_bunt"].includes(outcome)) strikes += 1;
+    if (outcome === "foul" && strikes < 2) strikes += 1;
+    const terminal = balls >= 4 || strikes >= 3 || outcome === "hbp" || outcome === "in_play";
+    if (!terminal) {
+      return {
+        ...current,
+        pa_started: true,
+        pitch_sequence: current.pitch_sequence + 1,
+        last_event_sequence: lastSequence,
+        count: { balls, strikes, label: `${balls}-${strikes}`, server_authoritative: true }
+      };
+    }
+    const next = scoutingHitters[(currentScoutingIndex + 1) % Math.max(scoutingHitters.length, 1)];
+    return {
+      ...current,
+      lineup_slot: next ? ((current.lineup_slot % scoutingHitters.length) + 1) : current.lineup_slot,
+      hitter_id: next ? Number(next.id) : current.hitter_id,
+      plate_appearance_key: `offline-g${current.game_id}-${callId()}`,
+      pa_started: false,
+      pitch_sequence: 0,
+      last_event_sequence: lastSequence,
+      count: { balls: 0, strikes: 0, label: "0-0", server_authoritative: true }
+    };
+  };
+
+  const confirmOutcome = async (outcome: QuickOutcome, detail?: InPlayDetail) => {
+    const deviceId = deviceSession?.device?.id;
+    const factory = gameEventFactoryRef.current;
+    if (!deviceId || !selectedGame || !factory || !currentApiHitter || !lastCall) return;
+    try {
+      const start = factory.beginPlateAppearance();
+      const pitch = factory.confirmedPitch(outcome, detail, lastCall.id);
+      for (const event of [start, pitch].filter(Boolean)) {
+        await eventQueue.enqueue(deviceId, selectedGame.id, event!);
+      }
+      const optimistic = optimisticOutcome(currentApiHitter, outcome, pitch.sequence);
+      setCurrentApiHitter(optimistic);
+      gameEventFactoryRef.current = new GameEventFactory(optimistic, callId);
+      setCurrentHitterId(String(optimistic.hitter_id));
+      setOutcomeVisible(false);
+      setInPlayMode(false);
+      setInPlayDraft({});
+      setQueueStatus("Pending sync");
+      await syncQueuedOutcomes(true);
+    } catch (error) {
+      setOutcomeVisible(false);
+      setQueueStatus("Pending sync");
+      await refreshQueueStatus();
+      setLastNetworkEvent(error instanceof Error ? `Outcome queued: ${error.message}` : "Outcome queued for retry");
+    }
   };
 
   const repeatLast = () => {
@@ -1805,16 +2090,6 @@ export default function App() {
               </Text>
             </View>
 
-            <Text style={styles.label}>Backend URL</Text>
-            <TextInput
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              onChangeText={setBackendUrl}
-              style={styles.input}
-              value={backendUrl}
-            />
-
             <TestModePanel
               checks={diagnosticChecks}
               isRunning={isRunningDiagnostics}
@@ -1822,14 +2097,16 @@ export default function App() {
               onRun={runDiagnostics}
             />
 
-            <Pressable style={styles.primaryButton} onPress={createRoom}>
+            <Pressable style={styles.primaryButton} onPress={beginCoachFlow}>
               <Text style={styles.primaryButtonText}>Coach Mode</Text>
-              <Text style={styles.buttonSubtext}>Create room</Text>
+              <Text style={styles.buttonSubtext}>Pair with Diamond · select game · create room</Text>
             </Pressable>
-            <Pressable style={styles.scoutButton} onPress={() => setScreen("diamondScout")}>
-              <Text style={styles.scoutButtonText}>Diamond Scout</Text>
-              <Text style={styles.buttonSubtext}>Mock scouting cards</Text>
-            </Pressable>
+            {__DEV__ && (
+              <Pressable style={styles.scoutButton} onPress={() => setScreen("diamondScout")}>
+                <Text style={styles.scoutButtonText}>Developer diagnostics</Text>
+                <Text style={styles.buttonSubtext}>Debug-only Diamond configuration</Text>
+              </Pressable>
+            )}
             <Pressable
               style={styles.secondaryButton}
               onPress={() => {
@@ -1839,6 +2116,52 @@ export default function App() {
             >
               <Text style={styles.secondaryButtonText}>Catcher Mode</Text>
               <Text style={styles.buttonSubtext}>Join with code</Text>
+            </Pressable>
+          </ScrollView>
+        )}
+
+        {screen === "pair" && (
+          <ScrollView contentContainerStyle={styles.content}>
+            <Text style={styles.screenTitle}>Pair with Diamond Scout</Text>
+            <Text style={styles.helper}>
+              In Diamond Scout, open Settings → DugoutCall and generate a one-time code. Codes expire after 10 minutes.
+            </Text>
+            <Text style={styles.label}>8-character pairing code</Text>
+            <TextInput
+              autoCapitalize="characters"
+              autoCorrect={false}
+              maxLength={10}
+              onChangeText={setPairingCode}
+              placeholder="ABCD 2345"
+              placeholderTextColor="#718078"
+              style={styles.input}
+              value={pairingCode}
+            />
+            <Pressable style={styles.primaryButton} disabled={pairingBusy} onPress={pairDevice}>
+              <Text style={styles.primaryButtonText}>{pairingBusy ? "Pairing…" : "Pair coach iPhone"}</Text>
+              <Text style={styles.buttonSubtext}>Credential stays in iOS SecureStore</Text>
+            </Pressable>
+            <Pressable style={styles.secondaryButton} onPress={() => setScreen("role")}>
+              <Text style={styles.secondaryButtonText}>Back</Text>
+            </Pressable>
+          </ScrollView>
+        )}
+
+        {screen === "games" && (
+          <ScrollView contentContainerStyle={styles.content}>
+            <Text style={styles.screenTitle}>{deviceSession?.program.name || "Diamond Scout"}</Text>
+            <Text style={styles.helper}>Select the upcoming or active game. Scouting is cached before the room opens.</Text>
+            {availableGames.length === 0 && (
+              <View style={styles.notice}><Text style={styles.noticeText}>No Diamond games are available for this team.</Text></View>
+            )}
+            {availableGames.map((game) => (
+              <Pressable key={game.id} style={styles.primaryButton} onPress={() => selectGameForCoach(game)}>
+                <Text style={styles.primaryButtonText}>{game.opponent_name}</Text>
+                <Text style={styles.buttonSubtext}>{game.game_date || "Date TBD"} · {game.home_away} · {game.status}</Text>
+              </Pressable>
+            ))}
+            <Pressable style={styles.secondaryButton} onPress={unpairDevice}>
+              <Text style={styles.secondaryButtonText}>Unpair and remove local scouting</Text>
             </Pressable>
           </ScrollView>
         )}
@@ -1934,6 +2257,80 @@ export default function App() {
             onRunDiagnostics={runDiagnostics}
           />
         )}
+        <Modal animationType="slide" transparent visible={outcomeVisible} onRequestClose={() => setOutcomeVisible(false)}>
+          <View style={styles.outcomeBackdrop}>
+            <ScrollView contentContainerStyle={styles.outcomeCard}>
+              <Text style={styles.screenTitle}>{inPlayMode ? "Confirm ball in play" : "Record actual result?"}</Text>
+              <Text style={styles.helper}>The pitch call was relayed. Diamond changes only after you confirm what actually happened.</Text>
+              {!inPlayMode ? (
+                <View style={styles.zoneGrid}>
+                  {([
+                    ["ball", "Ball"],
+                    ["called_strike", "Called strike"],
+                    ["swinging_strike", "Swinging strike"],
+                    ["foul", "Foul"],
+                    ["foul_bunt", "Foul bunt"],
+                    ["hbp", "Hit by pitch"]
+                  ] as Array<[QuickOutcome, string]>).map(([value, label]) => (
+                    <Pressable key={value} style={styles.tile} onPress={() => confirmOutcome(value)}>
+                      <Text style={styles.tileText}>{label}</Text>
+                    </Pressable>
+                  ))}
+                  <Pressable style={styles.tile} onPress={() => setInPlayMode(true)}>
+                    <Text style={styles.tileText}>In play</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.label}>Plate appearance result</Text>
+                  <View style={styles.zoneGrid}>
+                    {(["single", "double", "triple", "home_run", "field_out", "fielders_choice", "error", "sac_fly", "sac_bunt"] as InPlayDetail["paResult"][]).map((value) => (
+                      <Pressable
+                        key={value}
+                        style={[styles.tile, inPlayDraft.paResult === value && styles.tileSelected]}
+                        onPress={() => setInPlayDraft((current) => ({ ...current, paResult: value }))}
+                      ><Text style={[styles.tileText, inPlayDraft.paResult === value && styles.tileTextSelected]}>{value.replaceAll("_", " ")}</Text></Pressable>
+                    ))}
+                  </View>
+                  <Text style={styles.label}>Batted-ball type</Text>
+                  <View style={styles.zoneGrid}>
+                    {(["GB", "LD", "FB", "PU", "Bunt"] as InPlayDetail["battedBall"][]).map((value) => (
+                      <Pressable
+                        key={value}
+                        style={[styles.tile, inPlayDraft.battedBall === value && styles.tileSelected]}
+                        onPress={() => setInPlayDraft((current) => ({ ...current, battedBall: value }))}
+                      ><Text style={[styles.tileText, inPlayDraft.battedBall === value && styles.tileTextSelected]}>{value}</Text></Pressable>
+                    ))}
+                  </View>
+                  <Text style={styles.label}>Field location</Text>
+                  <View style={styles.zoneGrid}>
+                    {(["left_side", "middle", "right_side"] as const).map((value) => (
+                      <Pressable
+                        key={value}
+                        style={[styles.tile, inPlayDraft.fieldLocation === value && styles.tileSelected]}
+                        onPress={() => setInPlayDraft((current) => ({ ...current, fieldLocation: value }))}
+                      ><Text style={[styles.tileText, inPlayDraft.fieldLocation === value && styles.tileTextSelected]}>{value.replace("_", " ")}</Text></Pressable>
+                    ))}
+                  </View>
+                  <Pressable
+                    disabled={!inPlayDraft.paResult || !inPlayDraft.battedBall || !inPlayDraft.fieldLocation}
+                    style={styles.primaryButton}
+                    onPress={() => confirmOutcome("in_play", inPlayDraft as InPlayDetail)}
+                  ><Text style={styles.primaryButtonText}>Confirm in-play result</Text></Pressable>
+                </>
+              )}
+              <Pressable
+                style={styles.secondaryButton}
+                onPress={() => { setOutcomeVisible(false); setInPlayMode(false); setInPlayDraft({}); }}
+              ><Text style={styles.secondaryButtonText}>Skip — not charting</Text></Pressable>
+              {queueStatus !== "Synced" && (
+                <Pressable style={styles.secondaryButton} onPress={() => syncQueuedOutcomes(true)}>
+                  <Text style={styles.secondaryButtonText}>Diamond sync: {queueStatus} · retry now</Text>
+                </Pressable>
+              )}
+            </ScrollView>
+          </View>
+        </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -4303,6 +4700,21 @@ const styles = StyleSheet.create({
     color: "#f3b23f",
     fontSize: 14,
     fontWeight: "900"
+  },
+  outcomeBackdrop: {
+    backgroundColor: "rgba(0, 0, 0, 0.72)",
+    flex: 1,
+    justifyContent: "flex-end"
+  },
+  outcomeCard: {
+    backgroundColor: "#0f1813",
+    borderColor: "#344739",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderWidth: 1,
+    gap: 14,
+    maxHeight: "90%",
+    padding: 20
   },
   zoneGrid: {
     flexDirection: "row",

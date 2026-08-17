@@ -2,20 +2,14 @@
   "expo": {
     "name": "DugoutCall",
     "slug": "dugoutcall",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "dugoutcall",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0b100d"
-    },
-    "newArchEnabled": false,
     "ios": {
       "bundleIdentifier": "com.chrisbaso.dugoutcall",
-      "buildNumber": "15",
+      "buildNumber": "16",
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -32,7 +26,15 @@
     "plugins": [
       "@livekit/react-native-expo-plugin",
       "@config-plugins/react-native-webrtc",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0b100d",
+          "image": "./assets/splash.png",
+          "imageWidth": 200
+        }
+      ]
     ]
   }
 }
