@@ -1,6 +1,6 @@
 # DugoutCall integrated pilot release
 
-Status: conditional internal candidate. Automated implementation, managed deployments, CI, and signed EAS build 18 are complete. Apple blocked internal TestFlight delivery because a required account agreement is missing or expired; the physical gate follows that account-holder action. Public launch is disabled.
+Status: AUTOMATED INTEGRATION PASS — PHYSICAL FIELD GATE REQUIRED. Automated implementation, managed deployments, CI, signed EAS build 18, App Store Connect upload/processing, internal-group assignment, and tester-facing notes are complete. Public launch is disabled.
 
 ## Coordinates
 
@@ -40,7 +40,7 @@ Known risks include physical Bluetooth/audio-route behavior not reproducible in 
 - Diamond Preview: `https://diamond-scout-assistant-7dizs8asd-chrisbasos-projects.vercel.app`; Vercel deployment `dpl_DrYLHLK1u7BAiuhr8jxfPcfzFsCW`; Supabase migration head `e3d2f9f69976` with final security/performance advisors clear.
 - Backend: Render service `srv-d7t4cn50lvsc73d7b2d0`, deployment `dep-da1pf2rl550s73agktng`; credential-safe live HTTPS/WSS smoke passed signed roles, LiveKit issuance, one-way relay, and protected/redacted diagnostics.
 - Mobile artifact: signed store-distribution build `0.2.0 (18)`, EAS ID `0e46e166-ea9d-4e41-8e5a-407298eb2c98`, [build record](https://expo.dev/accounts/chrisbaso/projects/dugoutcall/builds/0e46e166-ea9d-4e41-8e5a-407298eb2c98), source `a052aabfc32a8c98e6c4720f2c7afa49b509f5fc`.
-- TestFlight: submission `6b3065e2-48fd-4fe5-a88a-ce0ff86e47d1` ended `ERRORED`; Apple returned `403` because a required agreement is missing or expired. The Account Holder must accept it before the same signed build can be delivered to internal testers.
+- TestFlight: the initial submission `6b3065e2-48fd-4fe5-a88a-ce0ff86e47d1` exposed Apple's missing-agreement gate. After Account Holder acceptance propagated, [submission `1f28245a-bfd2-4cb5-934d-c8ad139aea8b`](https://expo.dev/accounts/chrisbaso/projects/dugoutcall/submissions/1f28245a-bfd2-4cb5-934d-c8ad139aea8b) succeeded. App Store Connect processed `0.2.0 (18)`, made it available for 90 days, and assigned it to Coaches, Internal (three testers), and Team (Expo). Controlled-pilot test notes are saved.
 - Automated evidence: Diamond `155 passed`; DugoutCall server `18 passed`; Expo `16 passed`, TypeScript clean, Expo Doctor `21/21`, Hermes iOS export passed; real-process E2E returned `PASS` for contract `2026-08-17`. Diamond CI [32080280815](https://github.com/chrisbaso/diamond-scout-assistant/actions/runs/32080280815), DugoutCall CI [32081088976](https://github.com/chrisbaso/DugoutCall/actions/runs/32081088976), and Swift [32081089029](https://github.com/chrisbaso/DugoutCall/actions/runs/32081089029) passed; GitGuardian passed both PRs.
 
-Do not enable the three pilot staffs until TestFlight delivery and the signed `docs/FIELD_TEST.md` gate are complete. No billing, Android, HQ, GameChanger automation, catcher talkback/acknowledgements, paid service upgrade, or public launch is part of this release.
+Do not enable the three pilot staffs until the signed `docs/FIELD_TEST.md` gate is complete. No billing, Android, HQ, GameChanger automation, catcher talkback/acknowledgements, paid service upgrade, or public launch is part of this release.
