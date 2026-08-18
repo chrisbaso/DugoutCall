@@ -43,4 +43,10 @@ describe('RoomStore', () => {
 
     expect(() => store.joinRoom(room.code, { role: 'catcher' })).toThrow(/expired/i);
   });
+
+  it('rejects invalid runtime roles rather than treating them as catcher', () => {
+    const store = new RoomStore({ ttlMs: 60_000, now: () => 1_000 });
+    const room = store.createRoom({ coachName: 'Coach B' });
+    expect(() => store.joinRoom(room.code, { role: 'admin' as never })).toThrow(/invalid participant role/i);
+  });
 });

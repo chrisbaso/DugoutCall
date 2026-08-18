@@ -163,7 +163,7 @@ public final class DiamondScoutMockClient: DiamondScoutClient {
 
     public func session() async throws -> DiamondScoutSession {
         DiamondScoutSession(
-            schemaVersion: "2026-06-10",
+            schemaVersion: "2026-08-17",
             program: DiamondScoutProgram(name: "Diamond Scout", season: "2026"),
             capabilities: DiamondScoutCapabilities(
                 hitterCards: true,
@@ -171,14 +171,17 @@ public final class DiamondScoutMockClient: DiamondScoutClient {
                 eventIngest: true,
                 currentHitter: true,
                 advance: true,
-                offlineEventQueue: true
+                offlineEventQueue: true,
+                devicePairing: true
             ),
-            countRulesVersion: "2026-06-03",
+            device: DiamondScoutDevice(id: "dcd_reference", label: "Reference iPhone", platform: "ios", lastUsedAt: nil),
+            countRulesVersion: "2026-08-17",
             enums: DiamondScoutEnums(
                 pitchResults: ["ball", "called_strike", "swinging_strike", "foul", "foul_bunt", "in_play", "hbp"],
                 paActions: ["intentional_walk"],
                 paResults: ["walk", "strikeout", "hbp", "single", "double", "triple", "home_run", "field_out", "fielders_choice", "error", "sac_fly", "sac_bunt"],
-                pitchLocations: ["inside", "away", "up", "down", "middle", "up_in", "up_away", "down_in", "down_away"]
+                pitchLocations: ["inside", "away", "up", "down", "middle", "up_in", "up_away", "down_in", "down_away"],
+                runnerResults: ["stolen_base", "caught_stealing"]
             )
         )
     }
@@ -210,22 +213,24 @@ public final class DiamondScoutMockClient: DiamondScoutClient {
                 DiamondScoutLineupHitter(slot: 3, hitterID: 12, jersey: "12", name: "Nolan Price", notes: "Bunt threat."),
                 DiamondScoutLineupHitter(slot: 4, hitterID: 23, jersey: "23", name: "Quinn Walsh", notes: nil)
             ],
-            eventSummary: DiamondScoutEventSummary(acceptedEvents: 12, plateAppearances: 3, lastEventID: "dc-evt-0012")
+            eventSummary: DiamondScoutEventSummary(acceptedEvents: 12, plateAppearances: 3, lastEventID: "dc-evt-0012", lastSequence: 12)
         )
     }
 
     public func currentHitter(gameID: Int) async throws -> DiamondScoutCurrentHitter {
         DiamondScoutCurrentHitter(
+            schemaVersion: "2026-08-17",
             gameID: gameID,
             lineupSlot: 4,
             plateAppearanceKey: "g\(gameID)-pa-4",
             hitterID: 4,
+            pitcherID: 17,
+            paStarted: true,
+            pitchSequence: 3,
+            lastEventSequence: 4,
             count: DiamondScoutCount(balls: 2, strikes: 1, label: "2-1"),
             card: mockCard(gameID: gameID),
-            next: [
-                DiamondScoutNextHitter(slot: 5, hitterID: 8, displayName: "#8 Strey"),
-                DiamondScoutNextHitter(slot: 6, hitterID: 12, displayName: "#12 Price")
-            ]
+            onDeck: DiamondScoutNextHitter(slot: 5, hitterID: 8, displayName: "#8 Strey")
         )
     }
 
@@ -313,7 +318,7 @@ public final class DiamondScoutMockClient: DiamondScoutClient {
 
     private func mockCard(gameID: Int?) -> DiamondScoutHitterCard {
         DiamondScoutHitterCard(
-            schemaVersion: "2026-06-10",
+            schemaVersion: "2026-08-17",
             opponent: DiamondScoutCardOpponent(id: 70, name: "Edina Hornets 14AAA", season: "2026"),
             gameID: gameID,
             hitter: DiamondScoutHitter(id: 4, name: "Isaiah Kelly", displayName: "#4 Isaiah Kelly", jersey: "4", bats: "R"),

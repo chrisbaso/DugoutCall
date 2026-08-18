@@ -23,7 +23,7 @@ final class DiamondScoutClientTests: XCTestCase {
 
         let card = try await client.hitterCard(opponentID: 70, hitterID: 4, gameID: 101)
 
-        XCTAssertEqual(card.schemaVersion, "2026-06-10")
+        XCTAssertEqual(card.schemaVersion, "2026-08-17")
         XCTAssertEqual(card.opponent.id, 70)
         XCTAssertEqual(card.hitter.displayName, "#4 Isaiah Kelly")
         XCTAssertEqual(card.confidence.key, "high")

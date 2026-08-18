@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://diamond-scout.invalid/contracts/dugoutcall/2026-08-17",
+  "title": "Diamond Scout DugoutCall Pilot API Contract",
+  "schema_version": "2026-08-17",
+  "count_rules_version": "2026-08-17",
+  "authentication": {
+    "pairing_exchange": "unauthenticated-rate-limited-one-time-code",
+    "api": "bearer-device-credential",
+    "credential_destination": "coach-device-only"
+  },
+  "capabilities": {
+    "hitter_cards": true,
+    "game_setup": true,
+    "event_ingest": true,
+    "current_hitter": true,
+    "advance": true,
+    "device_pairing": true,
+    "offline_event_queue": true
+  },
+  "required_paths": {
+    "/api/v1/device-pairings/exchange": ["POST"],
+    "/api/v1/session": ["GET"],
+    "/api/v1/opponents": ["GET"],
+    "/api/v1/games": ["GET", "POST"],
+    "/api/v1/games/{game_id}": ["GET"],
+    "/api/v1/games/{game_id}/lineup-summaries": ["GET"],
+    "/api/v1/games/{game_id}/current-hitter": ["GET"],
+    "/api/v1/games/{game_id}/advance": ["POST"],
+    "/api/v1/games/{game_id}/events": ["POST"],
+    "/api/v1/opponents/{opponent_id}/hitters/{hitter_id}/card": ["GET"],
+    "/api/v1/opponents/{opponent_id}/hitters/by-jersey/{jersey}/card": ["GET"],
+    "/api/v1/telemetry": ["POST"]
+  },
+  "device_scopes": [
+    "advance:write",
+    "events:write",
+    "games:read",
+    "games:write",
+    "scouting:read",
+    "telemetry:write"
+  ],
+  "events": {
+    "types": ["pa_start", "pitch", "contact", "pa_result", "pa_action", "runner", "bunt", "undo", "correction"],
+    "pitch_results": ["ball", "called_strike", "swinging_strike", "foul", "foul_bunt", "in_play", "hbp"],
+    "pa_results": ["walk", "strikeout", "hbp", "single", "double", "triple", "home_run", "field_out", "fielders_choice", "error", "sac_fly", "sac_bunt"],
+    "runner_results": ["stolen_base", "caught_stealing"],
+    "idempotency_key": "event_id",
+    "ordering_key": "sequence",
+    "server_authoritative_count": true,
+    "partial_batch_acceptance": true,
+    "undo_is_append_only": true,
+    "call_intent_projects_statistics": false,
+    "confirmed_outcome_projects_statistics": true
+  },
+  "privacy": {
+    "public_tenant_ids": false,
+    "danger_score_fields": false,
+    "catcher_receives_diamond_credential": false,
+    "room_backend_receives_diamond_credential": false
+  },
+  "error_schema": {
+    "type": "object",
+    "required": ["error"],
+    "properties": {
+      "error": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  }
+}

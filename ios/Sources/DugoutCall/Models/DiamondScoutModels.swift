@@ -42,6 +42,7 @@ public struct DiamondScoutSession: Codable, Equatable {
     public let schemaVersion: String
     public let program: DiamondScoutProgram
     public let capabilities: DiamondScoutCapabilities
+    public let device: DiamondScoutDevice?
     public let countRulesVersion: String
     public let enums: DiamondScoutEnums
 
@@ -49,8 +50,21 @@ public struct DiamondScoutSession: Codable, Equatable {
         case schemaVersion = "schema_version"
         case program
         case capabilities
+        case device
         case countRulesVersion = "count_rules_version"
         case enums
+    }
+}
+
+public struct DiamondScoutDevice: Codable, Equatable {
+    public let id: String
+    public let label: String
+    public let platform: String
+    public let lastUsedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, label, platform
+        case lastUsedAt = "last_used_at"
     }
 }
 
@@ -66,6 +80,7 @@ public struct DiamondScoutCapabilities: Codable, Equatable {
     public let currentHitter: Bool
     public let advance: Bool
     public let offlineEventQueue: Bool
+    public let devicePairing: Bool
 
     enum CodingKeys: String, CodingKey {
         case hitterCards = "hitter_cards"
@@ -74,6 +89,7 @@ public struct DiamondScoutCapabilities: Codable, Equatable {
         case currentHitter = "current_hitter"
         case advance
         case offlineEventQueue = "offline_event_queue"
+        case devicePairing = "device_pairing"
     }
 }
 
@@ -82,12 +98,14 @@ public struct DiamondScoutEnums: Codable, Equatable {
     public let paActions: [String]
     public let paResults: [String]
     public let pitchLocations: [String]
+    public let runnerResults: [String]
 
     enum CodingKeys: String, CodingKey {
         case pitchResults = "pitch_results"
         case paActions = "pa_actions"
         case paResults = "pa_results"
         case pitchLocations = "pitch_locations"
+        case runnerResults = "runner_results"
     }
 }
 
@@ -117,7 +135,7 @@ public struct DiamondScoutGame: Codable, Equatable, Identifiable {
     public let id: Int
     public let opponentID: Int
     public let opponentName: String
-    public let gameDate: String
+    public let gameDate: String?
     public let homeAway: String
     public let location: String?
     public let status: String
@@ -174,31 +192,43 @@ public struct DiamondScoutEventSummary: Codable, Equatable {
     public let acceptedEvents: Int
     public let plateAppearances: Int
     public let lastEventID: String?
+    public let lastSequence: Int
 
     enum CodingKeys: String, CodingKey {
         case acceptedEvents = "accepted_events"
         case plateAppearances = "plate_appearances"
         case lastEventID = "last_event_id"
+        case lastSequence = "last_sequence"
     }
 }
 
 public struct DiamondScoutCurrentHitter: Codable, Equatable {
+    public let schemaVersion: String
     public let gameID: Int
     public let lineupSlot: Int
     public let plateAppearanceKey: String
     public let hitterID: Int
+    public let pitcherID: Int?
+    public let paStarted: Bool
+    public let pitchSequence: Int
+    public let lastEventSequence: Int
     public let count: DiamondScoutCount
     public let card: DiamondScoutHitterCard
-    public let next: [DiamondScoutNextHitter]
+    public let onDeck: DiamondScoutNextHitter
 
     enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
         case gameID = "game_id"
         case lineupSlot = "lineup_slot"
         case plateAppearanceKey = "plate_appearance_key"
         case hitterID = "hitter_id"
+        case pitcherID = "pitcher_id"
+        case paStarted = "pa_started"
+        case pitchSequence = "pitch_sequence"
+        case lastEventSequence = "last_event_sequence"
         case count
         case card
-        case next
+        case onDeck = "on_deck"
     }
 }
 

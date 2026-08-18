@@ -4,6 +4,16 @@ import WebSocket from 'ws';
 import { RoomDiagnostics } from '../src/diagnostics.js';
 import { RoomStore } from '../src/rooms.js';
 import { attachWebSocketServer } from '../src/websocket.js';
+import { createRoomToken } from '../src/auth.js';
+
+const tokenSecret = 'websocket-test-secret';
+const joinMessage = (code: string, role: 'coach' | 'catcher', displayName?: string) => ({
+  type: 'join_room',
+  code,
+  role,
+  displayName,
+  token: createRoomToken({ secret: tokenSecret, roomCode: code, role, expiresAt: Date.now() + 60_000 })
+});
 
 const onceMessage = (socket: WebSocket) =>
   new Promise<any>((resolve) => {
@@ -29,7 +39,7 @@ describe('websocket relay', () => {
     const room = store.createRoom({ coachName: 'Coach B' });
 
     server = http.createServer();
-    attachWebSocketServer(server, store);
+    attachWebSocketServer(server, store, undefined, tokenSecret);
 
     await new Promise<void>((resolve) => server!.listen(0, resolve));
     const address = server.address();
@@ -46,8 +56,8 @@ describe('websocket relay', () => {
 
     const coachAssigned = onceMessage(coach);
     const catcherAssigned = onceMessage(catcher);
-    coach.send(JSON.stringify({ type: 'join_room', code: room.code, role: 'coach' }));
-    catcher.send(JSON.stringify({ type: 'join_room', code: room.code, role: 'catcher' }));
+    coach.send(JSON.stringify(joinMessage(room.code, 'coach')));
+    catcher.send(JSON.stringify(joinMessage(room.code, 'catcher')));
 
     await Promise.all([coachAssigned, catcherAssigned]);
 
@@ -78,7 +88,7 @@ describe('websocket relay', () => {
     store.joinRoom(room.code, { role: 'catcher', displayName: 'Catcher' });
 
     server = http.createServer();
-    attachWebSocketServer(server, store);
+    attachWebSocketServer(server, store, undefined, tokenSecret);
 
     await new Promise<void>((resolve) => server!.listen(0, resolve));
     const address = server.address();
@@ -89,12 +99,7 @@ describe('websocket relay', () => {
 
     const assigned = onceMessage(catcher);
     catcher.send(
-      JSON.stringify({
-        type: 'join_room',
-        code: room.code,
-        role: 'catcher',
-        displayName: 'Catcher'
-      })
+      JSON.stringify(joinMessage(room.code, 'catcher', 'Catcher'))
     );
 
     await expect(assigned).resolves.toMatchObject({
@@ -110,7 +115,7 @@ describe('websocket relay', () => {
     const room = store.createRoom({ coachName: 'Coach B' });
 
     server = http.createServer();
-    attachWebSocketServer(server, store);
+    attachWebSocketServer(server, store, undefined, tokenSecret);
 
     await new Promise<void>((resolve) => server!.listen(0, resolve));
     const address = server.address();
@@ -127,8 +132,8 @@ describe('websocket relay', () => {
 
     const coachAssigned = onceMessage(coach);
     const catcherAssigned = onceMessage(catcher);
-    coach.send(JSON.stringify({ type: 'join_room', code: room.code, role: 'coach' }));
-    catcher.send(JSON.stringify({ type: 'join_room', code: room.code, role: 'catcher' }));
+    coach.send(JSON.stringify(joinMessage(room.code, 'coach')));
+    catcher.send(JSON.stringify(joinMessage(room.code, 'catcher')));
     await Promise.all([coachAssigned, catcherAssigned]);
 
     const offerDelivered = onceMessage(catcher);
@@ -155,7 +160,7 @@ describe('websocket relay', () => {
     const room = store.createRoom({ coachName: 'Coach B' });
 
     server = http.createServer();
-    attachWebSocketServer(server, store, diagnostics);
+    attachWebSocketServer(server, store, diagnostics, tokenSecret);
 
     await new Promise<void>((resolve) => server!.listen(0, resolve));
     const address = server.address();
@@ -172,8 +177,8 @@ describe('websocket relay', () => {
 
     const coachAssigned = onceMessage(coach);
     const catcherAssigned = onceMessage(catcher);
-    coach.send(JSON.stringify({ type: 'join_room', code: room.code, role: 'coach' }));
-    catcher.send(JSON.stringify({ type: 'join_room', code: room.code, role: 'catcher' }));
+    coach.send(JSON.stringify(joinMessage(room.code, 'coach')));
+    catcher.send(JSON.stringify(joinMessage(room.code, 'catcher')));
     await Promise.all([coachAssigned, catcherAssigned]);
 
     const delivered = onceMessage(catcher);
@@ -201,8 +206,46 @@ describe('websocket relay', () => {
         })
       ])
     });
+    expect(diagnostics.snapshot(room.code).recentEvents.some((event) => event.detail === 'Fastball')).toBe(false);
 
     coach.close();
     catcher.close();
+  });
+
+  it('rejects missing, expired, and role-mismatched room credentials', async () => {
+    const store = new RoomStore({ ttlMs: 60_000, now: () => 1_000 });
+    const room = store.createRoom({ coachName: 'Coach B' });
+    server = http.createServer();
+    attachWebSocketServer(server, store, undefined, tokenSecret);
+    await new Promise<void>((resolve) => server!.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('missing server address');
+
+    const attempt = async (message: unknown) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${address.port}`);
+      await new Promise((resolve) => socket.once('open', resolve));
+      const result = onceMessage(socket);
+      socket.send(JSON.stringify(message));
+      const response = await result;
+      socket.close();
+      return response;
+    };
+
+    await expect(attempt({ type: 'join_room', code: room.code, role: 'coach' })).resolves.toMatchObject({
+      type: 'error',
+      message: expect.stringMatching(/credential required/i)
+    });
+    await expect(
+      attempt({
+        ...joinMessage(room.code, 'coach'),
+        token: createRoomToken({ secret: tokenSecret, roomCode: room.code, role: 'coach', expiresAt: 1 })
+      })
+    ).resolves.toMatchObject({ type: 'error', message: expect.stringMatching(/expired/i) });
+    await expect(
+      attempt({
+        ...joinMessage(room.code, 'catcher'),
+        role: 'coach'
+      })
+    ).resolves.toMatchObject({ type: 'error', message: expect.stringMatching(/does not match/i) });
   });
 });

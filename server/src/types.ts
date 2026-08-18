@@ -2,6 +2,10 @@ export type UserRole = 'coach' | 'catcher';
 export type AppMode = 'game' | 'practice';
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected';
 
+export function isUserRole(value: unknown): value is UserRole {
+  return value === 'coach' || value === 'catcher';
+}
+
 export interface Participant {
   id: string;
   role: UserRole;
