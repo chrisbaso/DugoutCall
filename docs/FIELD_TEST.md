@@ -7,7 +7,7 @@ This checklist is the final human gate. Do not mark it passed from simulator, un
 - Expo app: version `0.2.0`, iOS build `18`; EAS build `0e46e166-ea9d-4e41-8e5a-407298eb2c98` ([build record](https://expo.dev/accounts/chrisbaso/projects/dugoutcall/builds/0e46e166-ea9d-4e41-8e5a-407298eb2c98)); successful submission `1f28245a-bfd2-4cb5-934d-c8ad139aea8b`. App Store Connect processed the build, made it available for 90 days, assigned it to the Coaches, Internal, and Team (Expo) internal groups, and saved the controlled-pilot test notes.
 - Diamond: branch Preview for `integration/dugoutcall-live`, contract `2026-08-17`, migration `e3d2f9f69976`.
 - Backend: `https://dugoutcall.onrender.com`, Render deployment `dep-da1pf2rl550s73agktng`.
-- Data: synthetic integration organization/game recorded in the release record; never use unapproved minor/player data.
+- Data: Diamond operator `Diamond Pilot Operator` (`6`; retrieve credentials from the approved secret store), organization `Diamond Pilot Operations` (`4`), team `Pilot Operations` (`28`), synthetic opponent `DugoutCall Field Test Opponent` (`29`), and game `261` / client ID `dugoutcall-field-2026-08-18` at `Controlled Test Field` on `2026-08-18`. The verified starting state has nine synthetic lineup hitters, one live charting session, zero charting events, and zero active paired devices. Generate a fresh ten-minute pairing code when the session begins; never record it here.
 
 ## Preconditions
 
